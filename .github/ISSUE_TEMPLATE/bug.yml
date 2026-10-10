@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible Masaka problem without sharing credentials.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never attach auth.json, access tokens, refresh tokens, or private workspace IDs.
+  - type: input
+    id: version
+    attributes:
+      label: Masaka and Codex versions
+      placeholder: masaka 0.3.0; codex-cli 0.155.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [macOS, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Include commands and sanitized output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

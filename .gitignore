@@ -1,0 +1,5 @@
+node_modules/
+/vendor/sign-in-with-chatgpt-devkit/
+__pycache__/
+*.pyc
+*.tgz

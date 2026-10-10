@@ -1,0 +1,42 @@
+{
+  "name": "@masakaai/codex-multiple-env",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Switch isolated Codex account and workspace profiles without repeated logout/login",
+  "homepage": "https://github.com/masakaai/codex-multiple-env#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/masakaai/codex-multiple-env.git"
+  },
+  "bugs": {
+    "url": "https://github.com/masakaai/codex-multiple-env/issues"
+  },
+  "bin": {
+    "masaka": "src/cli.mjs"
+  },
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/cli.mjs && node --check src/app-server.mjs && python3 -m py_compile scripts/cws.py && npm test",
+    "prepack": "npm run check"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "src",
+    "scripts/cws.py",
+    "README.md",
+    "README.*.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "codex",
+    "openai",
+    "chatgpt",
+    "workspace",
+    "account-switcher",
+    "cli"
+  ],
+  "license": "Apache-2.0"
+}
