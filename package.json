@@ -17,7 +17,7 @@
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/cli.mjs && node --check src/app-server.mjs && python3 -m py_compile scripts/cws.py && npm test",
+    "check": "node --check src/cli.mjs && node --check src/app-server.mjs && python3 -m py_compile scripts/cws.py scripts/file-lock.py && npm test",
     "prepack": "npm run check"
   },
   "engines": {
@@ -26,6 +26,7 @@
   "files": [
     "src",
     "scripts/cws.py",
+    "scripts/file-lock.py",
     "README.md",
     "README.*.md",
     "LICENSE"

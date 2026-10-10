@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireProfileLease, clearThread, getDefaultProfile, getThread, prepareProfileCodexHome, setDefaultProfile, setThread } from "../src/state.mjs";
@@ -48,18 +48,12 @@ test("concurrent state updates and profile-home preparation are safe", async () 
   }
 });
 
-test("a lock left by a dead process is recovered atomically", async () => {
+test("an unlocked lock file left by a dead process is reusable", async () => {
   const previous = process.env.CX_HOME;
   const root = await mkdtemp(join(tmpdir(), "cx-stale-lock-test-"));
   process.env.CX_HOME = root;
   try {
-    const lockDirectory = join(root, ".cx-state.lock.d");
-    await mkdir(lockDirectory, { mode: 0o700 });
-    await writeFile(
-      join(lockDirectory, "0000000000000-dead.ticket"),
-      `${JSON.stringify({ pid: 99999999, token: "dead", createdAt: 0 })}\n`,
-      { mode: 0o600 },
-    );
+    await writeFile(join(root, ".cx-state.lock"), "leftover content is harmless\n", { mode: 0o600 });
     await setDefaultProfile("profile-after-crash");
     assert.equal(await getDefaultProfile(), "profile-after-crash");
   } finally {

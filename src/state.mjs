@@ -1,11 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { cxHome } from "./crypto-store.mjs";
 
 const STATE_VERSION = 2;
+const LOCK_HELPER = fileURLToPath(new URL("../scripts/file-lock.py", import.meta.url));
 
 function statePath() {
   return join(cxHome(), "cx-state.json");
@@ -64,89 +65,55 @@ async function writeStateUnlocked(value) {
   await chmod(path, 0o600);
 }
 
-function processIsAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-}
-
 async function acquireFileLock(lock, timeoutMs, busyMessage) {
-  const token = randomUUID();
-  const owner = { pid: process.pid, token, createdAt: Date.now() };
-  const lockDirectory = `${lock}.d`;
-  const ticket = join(lockDirectory, `${String(owner.createdAt).padStart(13, "0")}-${token}.ticket`);
-  const temporary = `${ticket}.tmp`;
-  const deadline = Date.now() + timeoutMs;
+  const python = process.env.MASAKA_PYTHON || "python3";
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(python, [LOCK_HELPER, lock, String(timeoutMs)], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let ready = false;
+    let released = false;
+    let stdout = "";
+    let stderr = "";
+    let resolveExit;
+    const exited = new Promise((resolve) => { resolveExit = resolve; });
 
-  await mkdir(lockDirectory, { recursive: true, mode: 0o700 });
-  await chmod(lockDirectory, 0o700);
-  const file = await open(temporary, "wx", 0o600);
-  try {
-    await file.writeFile(`${JSON.stringify(owner)}\n`);
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  await rename(temporary, ticket);
-
-  try {
-    for (;;) {
-      const entries = (await readdir(lockDirectory))
-        .filter((entry) => entry.endsWith(".ticket"))
-        .sort();
-      let firstLiveTicket;
-      for (const entry of entries) {
-        const candidate = join(lockDirectory, entry);
-        let candidateOwner;
-        try {
-          candidateOwner = JSON.parse(await readFile(candidate, "utf8"));
-        } catch (error) {
-          if (error?.code === "ENOENT") continue;
-          // Tickets are published by atomic rename, so unreadable content is
-          // never a partially written live ticket. Treat external corruption
-          // as busy instead of risking removal of another process's lock.
-          firstLiveTicket ??= candidate;
-          continue;
-        }
-        if (!processIsAlive(Number(candidateOwner?.pid))) {
-          try {
-            // Every contender owns a unique immutable path. Removing this
-            // exact dead ticket cannot delete a replacement lock.
-            await unlink(candidate);
-          } catch (error) {
-            if (error?.code !== "ENOENT") throw error;
-          }
-          continue;
-        }
-        firstLiveTicket ??= candidate;
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-4096); });
+    child.stdin.on("error", () => { /* exit handling below reports helper failures */ });
+    child.once("error", (error) => {
+      resolveExit({ error });
+      if (!ready) reject(new Error(`Cannot start the local lock helper: ${error.message}`));
+    });
+    child.once("exit", (code, signal) => {
+      resolveExit({ code, signal });
+      if (ready) return;
+      if (code === 75) reject(new Error(busyMessage));
+      else reject(new Error(stderr.trim() || `The local lock helper exited (${signal || code}).`));
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (ready) return;
+      stdout += chunk;
+      if (!stdout.includes("\n")) return;
+      if (stdout.trim() !== "ready") {
+        reject(new Error("The local lock helper returned an invalid handshake."));
+        child.kill("SIGTERM");
+        return;
       }
-      if (firstLiveTicket === ticket) break;
-      if (Date.now() >= deadline) throw new Error(busyMessage);
-      await delay(50);
-    }
-  } catch (error) {
-    try {
-      await unlink(ticket);
-    } catch (cleanupError) {
-      if (cleanupError?.code !== "ENOENT") throw cleanupError;
-    }
-    throw error;
-  }
-
-  let released = false;
-  return async () => {
-    if (released) return;
-    const current = JSON.parse(await readFile(ticket, "utf8"));
-    if (current.token !== token || current.pid !== process.pid) {
-      throw new Error("The local masaka lock changed owners during an update.");
-    }
-    await unlink(ticket);
-    released = true;
-  };
+      ready = true;
+      resolvePromise(async () => {
+        if (released) return;
+        released = true;
+        child.stdin.end();
+        const result = await exited;
+        if (result.error) throw result.error;
+        if (result.code !== 0) {
+          throw new Error(stderr.trim() || `The local lock helper exited (${result.signal || result.code}).`);
+        }
+      });
+    });
+  });
 }
 
 export async function withCxLock(name, operation) {
