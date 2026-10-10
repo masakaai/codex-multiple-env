@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const cli = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const fakeCws = fileURLToPath(new URL("./fake-cws.py", import.meta.url));
+const fakeNativeCodex = fileURLToPath(new URL("./fake-native-codex.py", import.meta.url));
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "masaka-manager-test-"));
@@ -37,6 +38,7 @@ function runCli(args, root, options = {}) {
     const environment = {
       ...process.env,
       CX_HOME: root,
+      CX_CODEX_BIN: fakeNativeCodex,
       MASAKA_CWS_SCRIPT: options.bundled ? undefined : fakeCws,
       CODEX_ACCESS_TOKEN: "must-not-leak",
       OPENAI_API_KEY: "must-not-leak",
