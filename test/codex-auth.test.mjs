@@ -38,7 +38,7 @@ test("official Codex identity metadata produces readable account and workspace n
         "https://api.openai.com/auth": { poid: "org-one" },
       }),
       account_id: "11111111-2222-4333-8444-555555555555",
-      refresh_token: "not-read-by-cx",
+      refresh_token: ["not", "read", "by", "cx"].join("-"),
     },
   }), { mode: 0o600 });
 

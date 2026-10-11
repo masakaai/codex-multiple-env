@@ -24,6 +24,9 @@
     "node": ">=22.12.0"
   },
   "files": [
+    ".codex-plugin",
+    "skills",
+    "assets/icon.png",
     "src",
     "scripts/cws.py",
     "scripts/file-lock.py",

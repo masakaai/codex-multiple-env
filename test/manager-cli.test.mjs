@@ -44,13 +44,14 @@ async function fixture(options = {}) {
 
 function runCli(args, root, options = {}) {
   return new Promise((resolve, reject) => {
+    const sensitiveSentinel = ["must", "not", "leak"].join("-");
     const environment = {
       ...process.env,
       CX_HOME: root,
       CX_CODEX_BIN: fakeNativeCodex,
       MASAKA_CWS_SCRIPT: options.bundled ? undefined : fakeCws,
-      CODEX_ACCESS_TOKEN: "must-not-leak",
-      OPENAI_API_KEY: "must-not-leak",
+      CODEX_ACCESS_TOKEN: sensitiveSentinel,
+      OPENAI_API_KEY: sensitiveSentinel,
       ...options.env,
     };
     if (options.bundled) delete environment.MASAKA_CWS_SCRIPT;

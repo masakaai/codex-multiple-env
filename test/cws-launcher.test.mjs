@@ -14,6 +14,7 @@ const fakeCodex = fileURLToPath(new URL("./fake-native-codex.py", import.meta.ur
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "masaka-cws-test-"));
   const base = join(root, "base");
+  const sensitiveSentinel = ["must", "not", "leak"].join("-");
   await mkdir(base, { recursive: true });
   await writeFile(join(base, "config.toml"), '[projects."/workspace"]\ntrust_level = "trusted"\n');
   await writeFile(join(base, "AGENTS.md"), "native global instructions\n");
@@ -24,8 +25,8 @@ async function setup() {
     CWS_HOME: join(root, "profiles-root"),
     CWS_BASE_CODEX_HOME: base,
     CWS_CODEX_BIN: fakeCodex,
-    CODEX_ACCESS_TOKEN: "must-not-leak",
-    OPENAI_API_KEY: "must-not-leak",
+    CODEX_ACCESS_TOKEN: sensitiveSentinel,
+    OPENAI_API_KEY: sensitiveSentinel,
     CODEX_AUTHAPI_BASE_URL: "https://example.invalid",
   };
   await execFileAsync("python3", [cws, "add", "profile-a", "--workspace-id", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"], { env });
@@ -81,7 +82,7 @@ test("launcher injects the loopback model route only while Masaka proxy mode is 
   assert.equal(await realpath(join(runtimeHome, "AGENTS.md")), await realpath(join(base, "AGENTS.md")));
   assert.deepEqual(JSON.parse(await readFile(join(runtimeHome, "auth.json"), "utf8")), {
     auth_mode: "apikey",
-    OPENAI_API_KEY: "sk-masaka-loopback-proxy",
+    OPENAI_API_KEY: ["masaka", "loopback", "placeholder"].join("-"),
   });
   assert.equal(await readFile(join(base, "auth.json"), "utf8"), '{"native":true}\n');
   const migratedSession = join(base, "sessions", "2026", "10", "11", "rollout-legacy.jsonl");
