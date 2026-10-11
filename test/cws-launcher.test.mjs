@@ -39,6 +39,7 @@ test("native codex starts with the selected isolated CODEX_HOME and sanitized au
   assert.equal(await realpath(event.codex_home), await realpath(home));
   assert.equal(event.has_access_token, false);
   assert.equal(event.has_openai_key, false);
+  assert.equal(event.has_codex_key, false);
   assert.equal(event.has_auth_override, false);
   assert.deepEqual(event.argv, [
     "-c", 'cli_auth_credentials_store="file"',
@@ -46,6 +47,54 @@ test("native codex starts with the selected isolated CODEX_HOME and sanitized au
     "-c", 'forced_chatgpt_workspace_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"',
     "--version",
   ]);
+});
+
+test("launcher injects the loopback model route only while Masaka proxy mode is enabled", async () => {
+  const { env } = await setup();
+  await writeFile(join(env.CWS_HOME, "masaka-proxy-routing.json"), JSON.stringify({
+    version: 1,
+    enabled: true,
+    baseUrl: "http://127.0.0.1:8787/backend-api/codex",
+  }), { mode: 0o600 });
+  const enabled = await execFileAsync("python3", [cws, "auto", "--", "--version"], { env });
+  const enabledEvent = JSON.parse(enabled.stdout.trim());
+  assert.equal(enabledEvent.has_codex_key, true, "native Codex must use only a loopback placeholder key in Proxy mode");
+  assert.equal(await realpath(enabledEvent.codex_home), await realpath(join(env.CWS_HOME, "proxy-client")));
+  assert.deepEqual(JSON.parse(await readFile(join(enabledEvent.codex_home, "auth.json"), "utf8")), {
+    auth_mode: "apikey",
+    OPENAI_API_KEY: "sk-masaka-loopback-proxy",
+  });
+  assert.deepEqual(enabledEvent.argv.slice(-5), [
+    "-c", 'model_provider="masaka-proxy"',
+    "-c", 'model_providers.masaka-proxy={name="Masaka Proxy",base_url="http://127.0.0.1:8787/backend-api/codex",wire_api="responses",requires_openai_auth=true,supports_websockets=true,supports_standalone_web_search=true}',
+    "--version",
+  ]);
+  assert.deepEqual(enabledEvent.argv.slice(0, 4), [
+    "-c", 'cli_auth_credentials_store="file"',
+    "-c", 'forced_login_method="api"',
+  ]);
+
+  await writeFile(join(env.CWS_HOME, "masaka-proxy-routing.json"), JSON.stringify({
+    version: 1,
+    enabled: false,
+    baseUrl: "http://127.0.0.1:8787/backend-api/codex",
+  }), { mode: 0o600 });
+  const disabled = await execFileAsync("python3", [cws, "auto", "--", "--version"], { env });
+  assert.doesNotMatch(disabled.stdout, /masaka-proxy/);
+  assert.equal(JSON.parse(disabled.stdout.trim()).has_openai_key, false);
+  assert.equal(JSON.parse(disabled.stdout.trim()).has_codex_key, false);
+
+  await writeFile(join(env.CWS_HOME, "masaka-proxy-routing.json"), JSON.stringify({
+    version: 1,
+    enabled: true,
+    baseUrl: "http://127.0.0.1:8787/backend-api/codex",
+  }), { mode: 0o600 });
+  const bypassed = await execFileAsync("python3", [cws, "auto", "--", "--version"], {
+    env: { ...env, MASAKA_BYPASS_PROXY: "1" },
+  });
+  assert.doesNotMatch(bypassed.stdout, /masaka-proxy/);
+  assert.equal(JSON.parse(bypassed.stdout.trim()).has_openai_key, false);
+  assert.equal(JSON.parse(bypassed.stdout.trim()).has_codex_key, false);
 });
 
 test("launcher refuses credentials hard-linked to another path", async () => {

@@ -88,3 +88,21 @@ export function resetCredits(result) {
     credits: Array.isArray(value.credits) ? value.credits : [],
   };
 }
+
+export function workspaceCredits(result) {
+  const buckets = result?.rateLimitsByLimitId && Object.keys(result.rateLimitsByLimitId).length
+    ? Object.values(result.rateLimitsByLimitId)
+    : result?.rateLimits ? [result.rateLimits] : [];
+  const credits = buckets.map((bucket) => bucket?.credits).find((value) => value?.hasCredits);
+  if (!credits) return undefined;
+  if (credits.unlimited) return { unlimited: true, balance: undefined };
+  const balance = typeof credits.balance === "string" ? Number(credits.balance.trim()) : Number.NaN;
+  if (!Number.isFinite(balance) || balance <= 0) return undefined;
+  return { unlimited: false, balance: Math.round(balance) };
+}
+
+export function formatWorkspaceCredits(result) {
+  const credits = workspaceCredits(result);
+  if (!credits) return undefined;
+  return credits.unlimited ? "Credits: Unlimited" : `Credits: ${credits.balance.toLocaleString()} credits`;
+}

@@ -92,9 +92,31 @@ codex --search
 codex exec "summarize this repository"
 ```
 
+### Optional: hot switching through the local Proxy
+
+On Apple Silicon macOS, run the one-time onboarding flow:
+
+```text
+masaka> /onboarding
+```
+
+It downloads a version- and SHA-256-pinned proxy runtime, installs a per-user
+launchd daemon, and enables Proxy mode. Restart existing Codex clients once
+after initial setup. Thereafter `/use` changes the account/workspace route for
+their **next request** without interrupting responses already in flight.
+
+`/auto true` is the default. Routing stays sticky for prompt-cache locality and
+switches only when the active account has 5% or less of its five-hour window,
+is unavailable, or is cooling down. Automatic priority is Pro → Business/Team
+→ other plans; within a plan group, more remaining capacity wins. Use `/order`
+for an explicit order.
+
 The shell function resolves the selected profile and then `exec`s the real
 Codex binary. It rejects `codex login`, `codex logout`, and authentication
 configuration overrides; use Masaka's `/add` and `/renew` flows instead.
+In Proxy mode, native Codex uses a dedicated local API-key identity containing
+only a loopback placeholder; the daemon alone reads and refreshes the real
+OAuth Profiles. This works for both the interactive TUI and `codex exec`.
 
 ## Commands
 
@@ -104,6 +126,10 @@ configuration overrides; use Masaka's `/add` and `/renew` flows instead.
 | `/usage` | Available reset-card count and returned card expiry details for all profiles |
 | `/profiles` | Saved account, workspace, plan, and active-profile information |
 | `/use NAME\|NUMBER` | Select the profile for newly started native Codex processes |
+| `/auto [true\|false]` | Inspect or change automatic switching; defaults on with a 5% threshold |
+| `/order` | Show priority; `/order 3 1` moves an account; `/order auto` restores policy order |
+| `/proxy on\|off` | Route newly started Codex clients through the daemon or directly |
+| `/onboarding` | Install and start the per-user local Proxy daemon |
 | `/add [NAME]` | Run official `codex login` in a new isolated profile; name is automatic by default |
 | `/renew NAME\|NUMBER` | Re-run official login for the same identity after its sessions close |
 | `/delete NAME\|NUMBER` | Require exact-name confirmation, then move the profile to Masaka's recoverable trash |
@@ -114,20 +140,24 @@ Every slash command also has a terminal form, such as `masaka status` or
 
 ## Status and reset cards
 
-Masaka uses the official Codex App Server's read-only account methods:
-`account/read`, `account/rateLimits/read`, and `account/usage/read`. The status
-view labels a 300-minute window as `5h`, calculates remaining percentage from
-the returned usage percentage, and displays the server's reset timestamp.
+Before Proxy onboarding, Masaka uses the official Codex App Server's read-only
+account methods: `account/read`, `account/rateLimits/read`, and
+`account/usage/read`. Once the daemon owns refresh, status reads the same
+ChatGPT account payloads without creating a second AuthManager; a 401 is handed
+to the daemon for refresh. The view labels a 300-minute window as `5h`,
+calculates remaining percentage from the returned usage percentage, and
+displays the server's reset timestamp.
 
 `/usage` reports the server's authoritative `availableCount`. Card detail rows
 can be capped or absent, so the count can be larger than the number of displayed
 rows. See the official [Codex App Server account endpoints](https://developers.openai.com/codex/app-server/#auth-endpoints).
 
-## Switching model—and the hot-switch boundary
+## Direct and Proxy switching boundaries
 
-`/use` changes the default for future Codex processes. It does **not** change
-the identity of an already-running Codex process or move a conversation between
-workspace governance boundaries.
+In direct mode, `/use` changes only future Codex processes. In Proxy mode,
+official login and workspace discovery remain direct while model traffic goes
+through the loopback daemon. `/use` can then route the next request of an
+already-running client; an in-flight response remains on its original account.
 
 This is intentional. A running Codex process caches an authentication manager,
 the active account, and workspace policy. Replacing `auth.json`, swapping a
@@ -138,10 +168,13 @@ Your access token could not be refreshed because you have since logged out
 or signed in to another account.
 ```
 
-There is no supported external command that safely converts an existing native
-Codex TUI to another account in place. The reliable workflow is `/use`, then
-start a new `codex`; existing sessions continue under their original profiles.
-No logout is required.
+Proxy clients use a dedicated API-key identity, so native `/status` reports
+`Model provider: masaka-proxy` and `Account: API key configured`; it cannot show
+the OAuth Profile selected behind the daemon. Use Masaka `/status` as the source
+of truth for the active proxy account, limits, and purchased Credits.
+`/proxy off` waits for in-flight responses, stops the daemon, and returns token
+refresh ownership to direct mode. Restart clients that were connected through
+the Proxy; this deliberate handoff prevents two processes refreshing one token.
 
 ## Credential and process safety
 
@@ -150,12 +183,16 @@ No logout is required.
 - Ambient API/access-token variables and auth endpoint overrides are removed
   before the native Codex process starts.
 - Profile credentials must be regular files—not symlinks or hard links.
-- Multiple native Codex sessions may share one profile; renewal and deletion
-  require an exclusive profile lock and fail while a managed session is active.
+- Proxy mode supports multiple native Codex sessions because only the daemon
+  owns OAuth refresh. Direct mode permits one managed session per Profile;
+  renewal and deletion also require that Profile's exclusive lock.
 - Profile directories are mode `0700`; metadata and credential files are mode
   `0600` where the platform supports POSIX permissions.
 - Masaka stores only display metadata in `~/.config/cx/cx-state.json`; secrets
   remain in Codex-owned profile homes under `~/.codex-workspaces/profiles/`.
+- The optional runtime is CodexMulti's MIT-licensed `proxy/` pinned to v0.2.15
+  and verified by SHA-256 before extraction. See
+  [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 By explicit design, Masaka does not add another encryption layer. With
 `cli_auth_credentials_store="file"`, Codex stores credentials in `auth.json`
@@ -168,14 +205,15 @@ describes the supported file, keyring, automatic, and ephemeral stores.
 ```text
 masaka (standalone manager)
   ├─ /add, /renew ───────> official `codex login`
-  ├─ /status, /usage ────> official `codex app-server` read APIs
-  └─ /use ───────────────> selected profile marker
+  ├─ /status, /usage ────> app-server (direct) / read-only backend (Proxy)
+  ├─ /use ───────────────> selected profile + optional live proxy route
+  └─ /onboarding ────────> pinned loopback Proxy + per-user daemon
 
 ordinary `codex` shell function
   └─ profile launcher ───> native Codex with isolated CODEX_HOME
+                              ├─ direct mode: ChatGPT backend
+                              └─ proxy mode: dummy client auth + local model route
 ```
-
-Masaka never proxies prompts, tool calls, or conversation content.
 
 ## Development
 

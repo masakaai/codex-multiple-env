@@ -25,6 +25,7 @@ export function startupBanner(version, columns = 80) {
     `Author   ${PROJECT_LINKS.author}`,
     "",
     "Start    /status  /profiles  /use <name|number>  /add",
+    "Proxy    /onboarding  /proxy  /auto  /order",
     "More     /usage  /renew  /delete  /help",
   ];
 

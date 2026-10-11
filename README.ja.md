@@ -30,13 +30,21 @@ eval "$(masaka shell-init)"
 | `/usage` | 全プロファイルの reset card 数と有効期限 |
 | `/profiles` | アカウント、Workspace、プランの一覧 |
 | `/use NAME\|NUMBER` | 新しく起動する Codex のプロファイルを選択 |
+| `/auto [true\|false]` | 自動切り替えを確認・変更（既定は有効、しきい値 5%） |
+| `/order` | 優先順位の表示・編集・自動順序への復元 |
+| `/proxy on\|off` | ローカル Proxy と直接接続を切り替え |
+| `/onboarding` | ユーザー用 Proxy daemon をインストールして起動 |
 | `/add [NAME]` | 分離された新規プロファイルで公式ログイン |
 | `/renew NAME\|NUMBER` | 同じ ID の認証を更新 |
 | `/delete NAME\|NUMBER` | 完全な名前確認後、復元可能な trash へ移動 |
 
-`/use` は既に動作中の Codex の ID を変更しません。実行中プロセスは認証と
-Workspace ポリシーを保持するため、安全な外部ホットスイッチ API はありません。
-選択後に新しい `codex` を起動してください。logout は不要です。
+Apple Silicon macOS では `/onboarding` でローカル daemon を導入できます。
+Proxy モードでは `/use` が既に動作中の Codex の**次のリクエスト**を切り替え、
+出力中の応答は中断しません。既定の `/auto true` は prompt cache を守るため
+現在の Profile を維持し、5時間枠が残り5%以下、または利用不能になった時だけ
+切り替えます。優先順位は Pro → Business/Team → その他で、`/order` で変更
+できます。`/proxy off` の直接モードでは `/use` は新規プロセスだけに反映
+されます。どちらのモードでも logout は不要です。
 
 各 Profile は独立した `CODEX_HOME` を使用し、グローバル
 `~/.codex/auth.json` を置換しません。Masaka は追加暗号化を行わず、所有者専用の

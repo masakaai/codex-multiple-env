@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import fcntl
@@ -29,10 +30,15 @@ except ImportError:  # pragma: no cover - Windows is reported by doctor.
     fcntl = None
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 META_FILE = ".cws-profile.json"
 SESSION_LOCK = ".cws-session.lock"
+PROXY_ROUTING_FILE = "masaka-proxy-routing.json"
+PROXY_CLIENT_DIR = "proxy-client"
+PROXY_CLIENT_KEY = "sk-masaka-loopback-proxy"
+PROXY_PROVIDER_ID = "masaka-proxy"
+PROXY_PROVIDER_NAME = "Masaka Proxy"
 SENSITIVE_CONFIG_KEYS = {
     "cli_auth_credentials_store",
     "forced_chatgpt_workspace_id",
@@ -140,6 +146,24 @@ def share_common_entries(home: Path) -> None:
             destination.symlink_to(source, target_is_directory=source.is_dir())
 
 
+def proxy_client_home() -> Path:
+    home = state_root() / PROXY_CLIENT_DIR
+    private_directory(home)
+    share_common_entries(home)
+    auth_path = home / "auth.json"
+    if auth_path.is_symlink():
+        raise CwsError("proxy client auth storage must not be a symlink")
+    auth = {
+        # Codex AuthMode serde spelling is `apikey` (not `api_key`). Keeping
+        # this in the dedicated proxy home prevents the TUI from falling back
+        # to ChatGPT onboarding or touching a real Profile credential.
+        "auth_mode": "apikey",
+        "OPENAI_API_KEY": PROXY_CLIENT_KEY,
+    }
+    atomic_write(auth_path, json.dumps(auth, indent=2) + "\n")
+    return home
+
+
 def create_profile(args: argparse.Namespace) -> int:
     name = validate_name(args.name)
     private_directory(state_root())
@@ -177,7 +201,7 @@ def codex_binary() -> str:
     return binary
 
 
-def codex_environment(home: Path) -> dict[str, str]:
+def codex_environment(home: Path, proxy_enabled: bool = False) -> dict[str, str]:
     environment = os.environ.copy()
     environment["CODEX_HOME"] = str(home)
     for key in (
@@ -186,6 +210,11 @@ def codex_environment(home: Path) -> dict[str, str]:
         "CODEX_AUTHAPI_BASE_URL", "CODEX_APP_SERVER_LOGIN_CLIENT_ID",
     ):
         environment.pop(key, None)
+    # Proxy-mode Codex is deliberately API-key authenticated locally. The
+    # loopback daemon replaces this placeholder with the selected Profile's
+    # ChatGPT access token, making the daemon the sole refresh-token owner.
+    if proxy_enabled:
+        environment["CODEX_API_KEY"] = PROXY_CLIENT_KEY
     return environment
 
 
@@ -232,16 +261,62 @@ def validate_renewed_identity(auth_path: Path, args: argparse.Namespace) -> None
         raise CwsError("renewed login belongs to a different workspace; previous credential restored")
 
 
-def config_args(metadata: dict[str, Any]) -> list[str]:
-    result = ["-c", 'cli_auth_credentials_store="file"', "-c", 'forced_login_method="chatgpt"']
+def proxy_base_url() -> str | None:
+    if os.environ.get("MASAKA_BYPASS_PROXY") == "1":
+        return None
+    path = state_root() / PROXY_ROUTING_FILE
+    try:
+        if not path.exists():
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise CwsError("proxy routing state must be a regular file")
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CwsError("cannot read Masaka proxy routing state") from exc
+    if value.get("version") != 1 or not isinstance(value.get("enabled"), bool):
+        raise CwsError("invalid Masaka proxy routing state")
+    if not value["enabled"]:
+        return None
+    base_url = value.get("baseUrl")
+    if not isinstance(base_url, str):
+        raise CwsError("invalid Masaka proxy base URL")
+    parsed = urlparse(base_url)
+    if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or parsed.path.rstrip("/") != "/backend-api/codex"
+            or parsed.port is None):
+        raise CwsError("Masaka proxy must use a loopback Codex endpoint")
+    return base_url
+
+
+def config_args(metadata: dict[str, Any], use_proxy: bool = True) -> tuple[list[str], bool]:
+    base_url = proxy_base_url() if use_proxy else None
+    login_method = "api" if base_url else "chatgpt"
+    result = ["-c", 'cli_auth_credentials_store="file"', "-c", f'forced_login_method="{login_method}"']
     workspace = metadata.get("workspace_id")
     if workspace:
         result += ["-c", f"forced_chatgpt_workspace_id={json.dumps(workspace)}"]
-    return result
+    if base_url:
+        provider = (
+            f'model_providers.{PROXY_PROVIDER_ID}={{'
+            f'name={json.dumps(PROXY_PROVIDER_NAME)},'
+            f'base_url={json.dumps(base_url)},'
+            'wire_api="responses",'
+            'requires_openai_auth=true,'
+            'supports_websockets=true,'
+            'supports_standalone_web_search=true'
+            '}'
+        )
+        result += [
+            "-c", f'model_provider="{PROXY_PROVIDER_ID}"',
+            "-c", provider,
+        ]
+    return result, bool(base_url)
 
 
-def command_for(metadata: dict[str, Any], arguments: list[str]) -> list[str]:
-    return [codex_binary(), *config_args(metadata), *arguments]
+def command_for(metadata: dict[str, Any], arguments: list[str], use_proxy: bool = True) -> tuple[list[str], bool]:
+    config, proxy_enabled = config_args(metadata, use_proxy)
+    return [codex_binary(), *config, *arguments], proxy_enabled
 
 
 def normalize_remainder(arguments: list[str]) -> list[str]:
@@ -314,8 +389,9 @@ def login(args: argparse.Namespace) -> int:
 
     try:
         if not args.reauth:
+            status_command, _ = command_for(metadata, ["login", "status"], use_proxy=False)
             status = subprocess.run(
-                command_for(metadata, ["login", "status"]),
+                status_command,
                 env=codex_environment(home), capture_output=True, check=False,
                 pass_fds=(lock,),
             )
@@ -328,8 +404,9 @@ def login(args: argparse.Namespace) -> int:
         arguments = ["login"]
         if args.device_auth:
             arguments.append("--device-auth")
+        login_command, _ = command_for(metadata, arguments, use_proxy=False)
         result = subprocess.run(
-            command_for(metadata, arguments), env=codex_environment(home),
+            login_command, env=codex_environment(home),
             check=False, pass_fds=(lock,),
         )
         if result.returncode != 0:
@@ -358,10 +435,13 @@ def login(args: argparse.Namespace) -> int:
 def launch(name: str, arguments: list[str]) -> int:
     home, metadata = load_profile(name)
     forwarded = validate_codex_arguments(arguments)
-    lock = acquire_lock(home, False)
-    command = command_for(metadata, forwarded)
+    command, proxy_enabled = command_for(metadata, forwarded)
+    runtime_home = proxy_client_home() if proxy_enabled else home
+    # In direct mode one process exclusively owns the refresh chain. Proxy
+    # clients may share the dummy-key home because only the daemon owns OAuth.
+    lock = acquire_lock(runtime_home, not proxy_enabled)
     try:
-        os.execvpe(command[0], command, codex_environment(home))
+        os.execvpe(command[0], command, codex_environment(runtime_home, proxy_enabled))
     finally:
         os.close(lock)
     return 127

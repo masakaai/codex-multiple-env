@@ -26,5 +26,6 @@ print(json.dumps({
     "codex_home": os.environ.get("CODEX_HOME"),
     "has_access_token": "CODEX_ACCESS_TOKEN" in os.environ,
     "has_openai_key": "OPENAI_API_KEY" in os.environ,
+    "has_codex_key": "CODEX_API_KEY" in os.environ,
     "has_auth_override": "CODEX_AUTHAPI_BASE_URL" in os.environ,
 }))

@@ -12,6 +12,13 @@ if os.environ.get("FAKE_CWS_STUBBORN") == "1":
         time.sleep(1)
 
 if "app-server" in sys.argv:
+    event_log = os.environ.get("FAKE_CWS_EVENT_LOG")
+    if event_log:
+        with open(event_log, "a", encoding="utf-8") as stream:
+            stream.write(f"{os.getpid()} {time.time_ns()}\n")
+    start_delay_ms = int(os.environ.get("FAKE_CWS_START_DELAY_MS", "0"))
+    if start_delay_ms:
+        time.sleep(start_delay_ms / 1000)
     for line in sys.stdin:
         request = json.loads(line)
         request_id = request.get("id")
@@ -31,6 +38,7 @@ if "app-server" in sys.argv:
                     "limitId": "codex",
                     "primary": {"usedPercent": 25, "windowDurationMins": 300, "resetsAt": 4102444800},
                     "secondary": {"usedPercent": 40, "windowDurationMins": 10080, "resetsAt": 4103049600},
+                    "credits": {"hasCredits": True, "unlimited": False, "balance": "1234.6"},
                     "rateLimitReachedType": None,
                 },
                 "rateLimitResetCredits": {

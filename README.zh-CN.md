@@ -63,6 +63,27 @@ codex --search
 codex exec "总结这个仓库"
 ```
 
+### 可选：运行中热切换 Proxy
+
+Apple Silicon macOS 用户可以完成一次 onboarding：
+
+```text
+masaka> /onboarding
+```
+
+它会下载经过固定版本和 SHA-256 校验的本地 Proxy runtime，安装当前用户的
+launchd daemon，并启用 Proxy 模式。第一次启用后重启现有 Codex 一次；以后
+`/use` 会让已经运行的 Codex 在**下一次请求**使用目标 Profile，当前正在输出的
+响应不会中断。
+
+默认 `/auto true`。自动策略保持当前账号以保留 prompt cache，只有其 5 小时
+剩余额度降到 5% 或以下、认证不可用或进入 cooldown 时才切换。默认候选顺序为
+Pro → Business/Team → 其他套餐；同档优先剩余额度更多的账号，无 5 小时窗口的
+账号优先于有限窗口。用 `/order` 自定义完整顺序。
+
+Proxy 模式下，原生 Codex 使用一个仅含 loopback 占位 key 的独立客户端身份；
+真实 OAuth Profile 只由 daemon 读取与刷新，交互式 TUI 和 `codex exec` 均适用。
+
 ## 命令
 
 | 命令 | 功能 |
@@ -71,6 +92,10 @@ codex exec "总结这个仓库"
 | `/usage` | 查看所有账号可用的 reset cards 数量及返回的过期信息 |
 | `/profiles` | 查看全部账号、Workspace、套餐与当前选择 |
 | `/use 名称\|编号` | 选择后续新启动的原生 Codex 使用的 Profile |
+| `/auto [true\|false]` | 查看或设置自动切换；默认开启，5 小时剩余 ≤5% 时切换 |
+| `/order` | 查看顺序；`/order 3 1` 移动账号；`/order auto` 恢复默认规则 |
+| `/proxy on\|off` | 选择新启动 Codex 使用 Proxy 或官方直连 |
+| `/onboarding` | 安装并启动当前用户的本地 Proxy daemon |
 | `/add [名称]` | 在全新隔离 Profile 中运行官方 `codex login`；默认自动命名 |
 | `/renew 名称\|编号` | 所有相关会话关闭后，为同一身份重新登录 |
 | `/delete 名称\|编号` | 要求输入完整名称确认，再移动到可恢复的 trash |
@@ -80,18 +105,21 @@ codex exec "总结这个仓库"
 
 ## `/status` 与 `/usage`
 
-Masaka 通过官方 Codex App Server 的只读接口 `account/read`、
-`account/rateLimits/read` 和 `account/usage/read` 获取数据。300 分钟窗口显示
-为 `5h`；剩余百分比和重置时间均由服务端返回值计算。
+Proxy onboarding 前，Masaka 通过官方 Codex App Server 的只读接口
+`account/read`、`account/rateLimits/read` 和 `account/usage/read` 获取数据。
+daemon 接管刷新后，状态页直接只读相同的 ChatGPT 账号数据；遇到 401 时只让
+daemon 刷新，不再创建第二个 AuthManager。300 分钟窗口显示为 `5h`；剩余百分比
+和重置时间均由服务端返回值计算。
 
 `/usage` 以服务端 `availableCount` 为准。服务端可能限制明细行数量，因此
 卡片总数可能大于显示的明细数。接口说明见
 [Codex App Server 文档](https://developers.openai.com/codex/app-server/#auth-endpoints)。
 
-## 为什么不支持运行中热切换
+## 直连与 Proxy 的切换边界
 
-`/use` 只影响后续新启动的 Codex。它不会改变已经运行的 Codex 进程身份，
-也不会让同一对话跨越 Workspace 的治理边界。
+直连模式下，`/use` 只影响后续新启动的 Codex。Proxy 模式下，登录和 Workspace
+发现仍走官方服务，只有模型请求经本机 `127.0.0.1` daemon；因此 `/use` 可以让
+已经运行的客户端在下一次请求切换路由。正在输出的响应继续使用原账号。
 
 运行中的 Codex 会缓存 AuthManager、账号和 Workspace 策略。替换
 `auth.json`、切换软链接或注入其他账号 Token 会与刷新流程竞争，正是产生
@@ -102,19 +130,29 @@ Your access token could not be refreshed because you have since logged out
 or signed in to another account.
 ```
 
-原生 TUI 当前没有安全的外部热切换入口。可靠方式是执行 `/use` 后新开一个
-`codex`；原有进程继续使用启动时的 Profile。整个过程无需 logout。
+Proxy 客户端使用独立的 API-key 身份，因此原生 `/status` 会显示
+`Model provider: masaka-proxy` 与 `Account: API key configured`，但无法显示
+daemon 后面当前选择的 OAuth Profile；代理实际账号、限额与 Credits 以
+`masaka /status` 为准。
+`/proxy off` 会等待在途响应结束、停止 daemon，并把 token 刷新所有权交还给
+直连模式。原先连接 Proxy 的 Codex 需要重启；这个明确交接可以避免两个进程
+同时刷新同一个 token。
 
 ## 安全边界
 
 - 一个 Profile 只保存一个账号与 Workspace 组合，并拥有一个 `CODEX_HOME`。
 - 永不复制、链接或替换全局 `~/.codex/auth.json`。
 - 启动 Codex 前清除环境中的 API/access token 和认证端点覆盖变量。
-- 拒绝软链接、硬链接凭据；多会话可并发使用，但 `/renew` 与 `/delete` 需要独占锁。
+- 拒绝软链接、硬链接凭据。Proxy 模式支持多个 Codex 会话，因为 OAuth 只由
+  daemon 刷新；直连模式每个 Profile 只允许一个托管会话，`/renew` 与
+  `/delete` 同样需要独占锁。
 - Profile 目录为 `0700`，元数据和凭据文件为 `0600`（POSIX 平台）。
 - Masaka 不额外加密。`cli_auth_credentials_store="file"` 使用 Codex 官方
   `auth.json` 文件存储；请把它当作密码保护。详见
   [官方凭据存储文档](https://developers.openai.com/codex/auth/#credential-storage)。
+- Proxy runtime 来自 MIT 许可的 CodexMulti `proxy/`，固定为 v0.2.15 并在
+  解包前校验 SHA-256；Masaka 只额外加入 refresh/reload 互斥补丁。详情见
+  [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
 
 本项目由 MASAKA AI 独立开发，不是 OpenAI 官方产品，也未获 OpenAI 背书。
 Apache-2.0 开源；安全问题请查看 [SECURITY.md](./SECURITY.md)。

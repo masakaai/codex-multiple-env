@@ -25,9 +25,15 @@ masaka
 e `/usage` mostra os reset cards. `/use 2` escolhe o perfil para novos processos
 Codex. `/renew` e `/delete` aceitam nome ou número.
 
-Um Codex já em execução não pode trocar de conta com segurança: autenticação e
-políticas do workspace ficam vinculadas ao processo. Após `/use`, inicie um novo
-`codex`; não é preciso fazer logout.
+### Proxy opcional para troca em tempo real
+
+No macOS Apple Silicon, `/onboarding` instala um daemon local por usuário. Depois,
+`/use 2` muda clientes Codex já abertos na **próxima solicitação**, sem interromper
+respostas em andamento. `/auto true` vem ativado: mantém a conta atual para
+preservar o cache do prompt e troca quando restam 5% ou menos da janela de 5
+horas, ou quando a conta fica indisponível. A prioridade padrão é
+Pro → Business/Team → outros planos; `/order` permite ajustá-la. `/proxy off` retorna
+ao modo direto, no qual `/use` afeta apenas novos processos. Não é preciso logout.
 
 Cada perfil usa um `CODEX_HOME` independente. Masaka nunca substitui
 `~/.codex/auth.json` e não adiciona uma camada extra de criptografia.

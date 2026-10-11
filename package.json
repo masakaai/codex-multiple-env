@@ -1,6 +1,6 @@
 {
   "name": "@masakaai/codex-multiple-env",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Switch isolated Codex account and workspace profiles without repeated logout/login",
   "homepage": "https://github.com/masakaai/codex-multiple-env#readme",
@@ -17,7 +17,7 @@
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/cli.mjs && node --check src/app-server.mjs && python3 -m py_compile scripts/cws.py scripts/file-lock.py && npm test",
+    "check": "node --check src/cli.mjs && node --check src/app-server.mjs && node --check src/proxy-policy.mjs && node --check src/proxy-runtime.mjs && node --check src/daemon.mjs && python3 -m py_compile scripts/cws.py scripts/file-lock.py && npm test",
     "prepack": "npm run check"
   },
   "engines": {
@@ -27,9 +27,11 @@
     "src",
     "scripts/cws.py",
     "scripts/file-lock.py",
+    "docs/assets/masaka-banner.png",
     "README.md",
     "README.*.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "keywords": [
     "codex",
