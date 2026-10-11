@@ -185,13 +185,15 @@ Your access token could not be refreshed because you have since logged out
 or signed in to another account.
 ```
 
-Proxy clients use an ephemeral API-key identity with the built-in `openai`
-provider redirected to the loopback gateway. Native `/status` therefore reports
+Proxy clients use a fixed loopback-only API-key identity from a thin, isolated
+runtime home with the built-in `openai` provider redirected to the gateway.
+Native `/status` therefore reports
 `Model provider: openai`, `Account: API key configured`, and the overridden base
 URL; it cannot show the OAuth Profile selected behind the daemon. Keeping the
-built-in provider id and normal `~/.codex` home preserves Codex's existing
-sessions, project trust, and resume picker. Use Masaka `/status` as the source of
-truth for the active proxy account, limits, and purchased Credits.
+built-in provider id while sharing native `~/.codex` sessions and SQLite state
+preserves Codex's existing sessions, project trust, and resume picker. Use
+Masaka `/status` as the source of truth for the active proxy account, limits,
+and purchased Credits.
 `/proxy off` waits for in-flight responses, stops the daemon, and returns token
 refresh ownership to direct mode. Restart clients that were connected through
 the Proxy; this deliberate handoff prevents two processes refreshing one token.
@@ -199,7 +201,8 @@ the Proxy; this deliberate handoff prevents two processes refreshing one token.
 ## Credential and process safety
 
 - One direct Profile, one account/workspace identity, one credential-isolated
-  `CODEX_HOME`; Proxy clients use ephemeral API-key auth in the normal Codex home.
+  `CODEX_HOME`; Proxy clients keep only a fixed loopback credential in an
+  isolated runtime home and share the native session/state stores.
 - The global `~/.codex/auth.json` is never copied, linked, or replaced.
 - Proxy mode preserves the native session, project-trust, and resume views.
   Direct mode intentionally keeps each Profile's sessions with its isolated

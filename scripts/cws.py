@@ -30,12 +30,13 @@ except ImportError:  # pragma: no cover - Windows is reported by doctor.
     fcntl = None
 
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 META_FILE = ".cws-profile.json"
 SESSION_LOCK = ".cws-session.lock"
 PROXY_ROUTING_FILE = "masaka-proxy-routing.json"
 PROXY_CLIENT_DIR = "proxy-client"
+PROXY_RUNTIME_DIR = "proxy-runtime"
 PROXY_CLIENT_KEY = "sk-masaka-loopback-proxy"
 LEGACY_PROXY_PROVIDER_ID = "masaka-proxy"
 LEGACY_PROXY_MIGRATION_MARKER = ".masaka-rollouts-imported-v1"
@@ -51,7 +52,20 @@ VALUE_OPTIONS = {
     "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C",
     "--cd", "--add-dir", "-a", "--ask-for-approval",
 }
-SHARED_ENTRIES = ("config.toml", "skills", "plugins", "rules", "hooks", "prompts", "themes", "pets")
+SHARED_ENTRIES = (
+    "config.toml", "AGENTS.md", "AGENTS.override.md", "skills", "plugins",
+    "rules", "hooks", "prompts", "themes", "pets",
+)
+PROXY_SHARED_DIRECTORIES = (
+    "sessions",
+    "archived_sessions",
+    "thread-writer-locks",
+    "shell_snapshots",
+    "attachments",
+    "generated_images",
+    "memories",
+)
+LEGACY_PROXY_SHARED_FILES = ("history.jsonl", "session_index.jsonl", "installation_id")
 
 
 class CwsError(Exception):
@@ -143,24 +157,103 @@ def share_common_entries(home: Path) -> None:
         source = base / entry
         destination = home / entry
         if source.exists() and not destination.exists() and not destination.is_symlink():
-            destination.symlink_to(source, target_is_directory=source.is_dir())
+            try:
+                destination.symlink_to(source, target_is_directory=source.is_dir())
+            except FileExistsError:
+                # Another launcher initialized the same home first.
+                pass
 
 
-def proxy_client_home() -> Path:
-    home = state_root() / PROXY_CLIENT_DIR
+def link_native_state(source: Path, destination: Path, target_is_directory: bool) -> None:
+    def points_to_source() -> bool:
+        return destination.is_symlink() and destination.resolve() == source.resolve()
+
+    if points_to_source():
+        return
+    if destination.exists() or destination.is_symlink():
+        # A concurrent launcher may have created the correct link after the
+        # first check and before this existence check.
+        if points_to_source():
+            return
+        raise CwsError(f"proxy runtime state shadows native Codex state: {destination}")
+    try:
+        destination.symlink_to(source, target_is_directory=target_is_directory)
+    except FileExistsError:
+        # Multiple terminal windows may launch Codex at the same time.
+        if not points_to_source():
+            raise CwsError(f"proxy runtime state changed during launch: {destination}")
+
+
+def prepare_proxy_runtime_files(home: Path, base: Path) -> None:
+    """Seed native root state without retaining replaceable file symlinks.
+
+    Codex atomically replaces files such as session_index.jsonl, which can
+    replace a symlink instead of updating its target. A private copy preserves
+    native prompt history, installation identity, and name-based resume while
+    shared session directories and CODEX_SQLITE_HOME remain authoritative.
+    """
+    for entry in LEGACY_PROXY_SHARED_FILES:
+        source = base / entry
+        destination = home / entry
+        if destination.is_symlink():
+            try:
+                points_to_source = destination.resolve() == source.resolve()
+            except OSError:
+                points_to_source = False
+            if not points_to_source:
+                raise CwsError(f"proxy runtime state shadows native Codex state: {destination}")
+        elif destination.exists():
+            if not destination.is_file():
+                raise CwsError(f"proxy runtime state must be a regular file: {destination}")
+            continue
+        if source.is_file():
+            try:
+                contents = source.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise CwsError(f"cannot seed native Codex state: {source}") from exc
+            # os.replace inside atomic_write replaces an old symlink itself,
+            # never the native file it used to target.
+            atomic_write(destination, contents)
+        elif destination.is_symlink():
+            try:
+                destination.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def proxy_runtime_home() -> Path:
+    """Create the thin API-key home while keeping native Codex state shared."""
+    home = state_root() / PROXY_RUNTIME_DIR
     private_directory(home)
-    share_common_entries(home)
-    auth_path = home / "auth.json"
-    if auth_path.is_symlink():
-        raise CwsError("proxy client auth storage must not be a symlink")
-    auth = {
-        # Codex AuthMode serde spelling is `apikey` (not `api_key`). Keeping
-        # this in the dedicated proxy home prevents the TUI from falling back
-        # to ChatGPT onboarding or touching a real Profile credential.
-        "auth_mode": "apikey",
-        "OPENAI_API_KEY": PROXY_CLIENT_KEY,
-    }
-    atomic_write(auth_path, json.dumps(auth, indent=2) + "\n")
+    if fcntl is None:
+        raise CwsError("proxy runtime initialization requires macOS or Linux")
+    descriptor = os.open(home / ".masaka-runtime-init.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        # Initialization is short, but serialization prevents one new Codex
+        # process from writing state while another launcher is still seeding it.
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        share_common_entries(home)
+        base = base_codex_home()
+        private_directory(base)
+        prepare_proxy_runtime_files(home, base)
+        for entry in PROXY_SHARED_DIRECTORIES:
+            source = base / entry
+            source.mkdir(parents=True, exist_ok=True, mode=0o700)
+            destination = home / entry
+            link_native_state(source, destination, target_is_directory=True)
+        auth_path = home / "auth.json"
+        if auth_path.is_symlink():
+            raise CwsError("proxy client auth storage must not be a symlink")
+        auth = {
+            # Codex AuthMode serde spelling is `apikey` (not `api_key`). Keeping
+            # this in the dedicated proxy home prevents the TUI from falling back
+            # to ChatGPT onboarding or touching a real Profile credential.
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": PROXY_CLIENT_KEY,
+        }
+        atomic_write(auth_path, json.dumps(auth, indent=2) + "\n")
+    finally:
+        os.close(descriptor)
     return home
 
 
@@ -256,18 +349,19 @@ def codex_binary() -> str:
 
 def codex_environment(home: Path, proxy_enabled: bool = False) -> dict[str, str]:
     environment = os.environ.copy()
+    native_sqlite_home = environment.get("CODEX_SQLITE_HOME")
     environment["CODEX_HOME"] = str(home)
     for key in (
-        "CODEX_ACCESS_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
+        "CODEX_ACCESS_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_SQLITE_HOME",
         "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
         "CODEX_AUTHAPI_BASE_URL", "CODEX_APP_SERVER_LOGIN_CLIENT_ID",
     ):
         environment.pop(key, None)
-    # Proxy-mode Codex is deliberately API-key authenticated locally. The
-    # loopback daemon replaces this placeholder with the selected Profile's
-    # ChatGPT access token, making the daemon the sole refresh-token owner.
     if proxy_enabled:
-        environment["CODEX_API_KEY"] = PROXY_CLIENT_KEY
+        # Auth stays in the thin runtime home, while every SQLite-backed state
+        # database remains the same one native Codex uses. The loopback daemon
+        # replaces the fixed placeholder before forwarding upstream.
+        environment["CODEX_SQLITE_HOME"] = native_sqlite_home or str(base_codex_home())
     return environment
 
 
@@ -345,7 +439,7 @@ def proxy_base_url() -> str | None:
 def config_args(metadata: dict[str, Any], use_proxy: bool = True) -> tuple[list[str], bool]:
     base_url = proxy_base_url() if use_proxy else None
     login_method = "api" if base_url else "chatgpt"
-    credential_store = "ephemeral" if base_url else "file"
+    credential_store = "file"
     result = [
         "-c", f'cli_auth_credentials_store="{credential_store}"',
         "-c", f'forced_login_method="{login_method}"',
@@ -486,14 +580,14 @@ def launch(name: str, arguments: list[str]) -> int:
     home, metadata = load_profile(name)
     forwarded = validate_codex_arguments(arguments)
     command, proxy_enabled = command_for(metadata, forwarded)
-    legacy_proxy_home = proxy_client_home() if proxy_enabled else None
-    lock_home = legacy_proxy_home if legacy_proxy_home is not None else home
-    # Proxy clients use an ephemeral API key supplied via the environment, so
-    # they can retain the user's native Codex sessions, project trust, and UI
-    # preferences without reading or replacing a Profile's OAuth credential.
-    runtime_home = base_codex_home() if proxy_enabled else home
-    if legacy_proxy_home is not None:
-        migrate_legacy_proxy_rollouts(legacy_proxy_home, runtime_home)
+    legacy_proxy_home = state_root() / PROXY_CLIENT_DIR if proxy_enabled else None
+    runtime_home = proxy_runtime_home() if proxy_enabled else home
+    lock_home = runtime_home
+    # Proxy mode keeps the built-in `openai` provider and the native Codex
+    # session/state stores. Only its fixed loopback API-key credential lives in
+    # the thin runtime home, so ~/.codex/auth.json is never read or replaced.
+    if legacy_proxy_home is not None and legacy_proxy_home.is_dir():
+        migrate_legacy_proxy_rollouts(legacy_proxy_home, base_codex_home())
     # In direct mode one process exclusively owns the refresh chain. Proxy
     # clients may share the dummy-key home because only the daemon owns OAuth.
     lock = acquire_lock(lock_home, not proxy_enabled)

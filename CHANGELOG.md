@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.2 — 2026-10-11
+
+- Fix native Codex TUI onboarding in Proxy mode by loading the fixed loopback
+  credential from an isolated runtime home instead of relying on the
+  non-interactive-only `CODEX_API_KEY` environment variable.
+- Keep the built-in `openai` provider while sharing native `~/.codex` sessions,
+  SQLite state, project trust, and resume history; global `auth.json` remains
+  untouched.
+- Preserve a custom native `CODEX_SQLITE_HOME`, and avoid linking mutable root
+  state files that Codex replaces atomically.
+- Preserve global `AGENTS.md` instructions and seed the native named-session
+  index into the isolated runtime under a concurrency-safe initialization lock.
+
 ## 0.4.0 — 2026-10-11
 
 - Add optional loopback Proxy mode with a per-user launchd daemon installed by

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,8 @@ async function setup() {
   const base = join(root, "base");
   await mkdir(base, { recursive: true });
   await writeFile(join(base, "config.toml"), '[projects."/workspace"]\ntrust_level = "trusted"\n');
+  await writeFile(join(base, "AGENTS.md"), "native global instructions\n");
+  await writeFile(join(base, "auth.json"), '{"native":true}\n', { mode: 0o600 });
   await chmod(fakeCodex, 0o755);
   const env = {
     ...process.env,
@@ -66,11 +68,22 @@ test("launcher injects the loopback model route only while Masaka proxy mode is 
     enabled: true,
     baseUrl: "http://127.0.0.1:8787/backend-api/codex",
   }), { mode: 0o600 });
-  const enabled = await execFileAsync("python3", [cws, "auto", "--", "--version"], { env });
+  const enabledResults = await Promise.all(Array.from({ length: 4 }, () =>
+    execFileAsync("python3", [cws, "auto", "--", "--version"], { env })));
+  const enabled = enabledResults[0];
+  for (const result of enabledResults) assert.equal(result.stderr, "");
   const enabledEvent = JSON.parse(enabled.stdout.trim());
-  assert.equal(enabledEvent.has_codex_key, true, "native Codex must use only a loopback placeholder key in Proxy mode");
-  assert.equal(await realpath(enabledEvent.codex_home), await realpath(base));
-  assert.equal(enabledEvent.codex_sqlite_home, null);
+  const runtimeHome = join(env.CWS_HOME, "proxy-runtime");
+  assert.equal(enabledEvent.has_codex_key, false, "interactive Codex must load the loopback credential from its isolated auth file");
+  assert.equal(await realpath(enabledEvent.codex_home), await realpath(runtimeHome));
+  assert.equal(await realpath(enabledEvent.codex_sqlite_home), await realpath(base));
+  assert.equal(await realpath(join(runtimeHome, "sessions")), await realpath(join(base, "sessions")));
+  assert.equal(await realpath(join(runtimeHome, "AGENTS.md")), await realpath(join(base, "AGENTS.md")));
+  assert.deepEqual(JSON.parse(await readFile(join(runtimeHome, "auth.json"), "utf8")), {
+    auth_mode: "apikey",
+    OPENAI_API_KEY: "sk-masaka-loopback-proxy",
+  });
+  assert.equal(await readFile(join(base, "auth.json"), "utf8"), '{"native":true}\n');
   const migratedSession = join(base, "sessions", "2026", "10", "11", "rollout-legacy.jsonl");
   assert.equal(JSON.parse((await readFile(migratedSession, "utf8")).split("\n")[0]).payload.model_provider, "openai");
   assert.equal(JSON.parse((await readFile(legacySession, "utf8")).split("\n")[0]).payload.model_provider, "masaka-proxy");
@@ -80,9 +93,30 @@ test("launcher injects the loopback model route only while Masaka proxy mode is 
     "--version",
   ]);
   assert.deepEqual(enabledEvent.argv.slice(0, 4), [
-    "-c", 'cli_auth_credentials_store="ephemeral"',
+    "-c", 'cli_auth_credentials_store="file"',
     "-c", 'forced_login_method="api"',
   ]);
+
+  // A pre-release build briefly linked mutable root files. Codex replaces
+  // session_index.jsonl atomically, so upgrade turns the link into a private
+  // seeded copy without touching the native file.
+  const nativeIndex = join(base, "session_index.jsonl");
+  const runtimeIndex = join(runtimeHome, "session_index.jsonl");
+  await writeFile(nativeIndex, '{"id":"native"}\n');
+  await symlink(nativeIndex, runtimeIndex);
+  await execFileAsync("python3", [cws, "auto", "--", "--version"], { env });
+  assert.equal((await lstat(runtimeIndex)).isSymbolicLink(), false);
+  assert.equal(await readFile(runtimeIndex, "utf8"), '{"id":"native"}\n');
+  await writeFile(runtimeIndex, '{"id":"runtime"}\n');
+  await execFileAsync("python3", [cws, "auto", "--", "--version"], { env });
+  assert.equal(await readFile(runtimeIndex, "utf8"), '{"id":"runtime"}\n');
+  assert.equal(await readFile(nativeIndex, "utf8"), '{"id":"native"}\n');
+
+  const customSqliteHome = join(env.CWS_HOME, "native-sqlite");
+  const customSqlite = await execFileAsync("python3", [cws, "auto", "--", "--version"], {
+    env: { ...env, CODEX_SQLITE_HOME: customSqliteHome },
+  });
+  assert.equal(JSON.parse(customSqlite.stdout.trim()).codex_sqlite_home, customSqliteHome);
 
   const archivedSession = join(base, "archived_sessions", "rollout-legacy.jsonl");
   await mkdir(join(base, "archived_sessions"), { recursive: true });

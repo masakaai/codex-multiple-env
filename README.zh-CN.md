@@ -144,12 +144,13 @@ Your access token could not be refreshed because you have since logged out
 or signed in to another account.
 ```
 
-Proxy 客户端使用仅存在于当前进程的 API-key 身份，并保持内置 `openai`
-provider，只把 Base URL 指向本机网关。因此原生 `/status` 会显示
+Proxy 客户端从一个极薄的隔离 runtime home 读取固定、仅限本机回环使用的
+API-key 身份，并保持内置 `openai` provider，只把 Base URL 指向本机网关。
+因此原生 `/status` 会显示
 `Model provider: openai`、`Account: API key configured` 和被覆盖的 Base URL，
-但无法显示 daemon 后面当前选择的 OAuth Profile。保留内置 provider ID 与
-原始 `~/.codex` 可以继续使用既有会话、项目 trust 和 resume 列表；代理实际
-账号、限额与 Credits 以 `masaka /status` 为准。
+但无法显示 daemon 后面当前选择的 OAuth Profile。保留内置 provider ID，并
+共享原生 `~/.codex` 的 sessions 与 SQLite 状态，可以继续使用既有会话、项目
+trust 和 resume 列表；代理实际账号、限额与 Credits 以 `masaka /status` 为准。
 `/proxy off` 会等待在途响应结束、停止 daemon，并把 token 刷新所有权交还给
 直连模式。原先连接 Proxy 的 Codex 需要重启；这个明确交接可以避免两个进程
 同时刷新同一个 token。
@@ -157,7 +158,8 @@ provider，只把 Base URL 指向本机网关。因此原生 `/status` 会显示
 ## 安全边界
 
 - 直连 Profile 各自保存一个账号与 Workspace 组合，并拥有凭据隔离的
-  `CODEX_HOME`；Proxy 客户端在原始 Codex home 中使用进程级临时 API-key。
+  `CODEX_HOME`；Proxy 客户端只在隔离 runtime home 中保存固定回环凭据，并
+  共享原生 Codex 的会话与状态存储。
 - 永不复制、链接或替换全局 `~/.codex/auth.json`。
 - Proxy 模式保留原生会话、项目 trust 与 resume 视图。直连模式为保证凭据
   隔离，仍把会话留在各 Profile 的 `CODEX_HOME`；新直连 Profile 只共享非敏感配置。
