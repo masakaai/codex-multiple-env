@@ -24,6 +24,8 @@ if "login" in sys.argv and os.environ.get("FAKE_LOGIN_IDENTITY"):
 print(json.dumps({
     "argv": sys.argv[1:],
     "codex_home": os.environ.get("CODEX_HOME"),
+    "codex_sqlite_home": os.environ.get("CODEX_SQLITE_HOME"),
+    "cwd": os.getcwd(),
     "has_access_token": "CODEX_ACCESS_TOKEN" in os.environ,
     "has_openai_key": "OPENAI_API_KEY" in os.environ,
     "has_codex_key": "CODEX_API_KEY" in os.environ,

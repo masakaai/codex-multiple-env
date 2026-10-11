@@ -88,30 +88,6 @@ async function atomicJson(path, value) {
   await chmod(path, 0o600);
 }
 
-async function atomicText(path, value) {
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, value, { mode: 0o600, flag: "wx" });
-  await rename(temporary, path);
-  await chmod(path, 0o600);
-}
-
-async function ensureFileCredentialStore(home) {
-  const path = join(home, "config.toml");
-  let content = "";
-  try {
-    content = await readFile(path, "utf8");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-  const withoutSetting = content
-    .split(/\r?\n/)
-    .filter((line) => !/^\s*cli_auth_credentials_store\s*=/.test(line))
-    .join("\n")
-    .replace(/^\n+/, "");
-  const wanted = `cli_auth_credentials_store = "file"\n${withoutSetting}`;
-  if (content !== wanted) await atomicText(path, wanted);
-}
-
 async function assertCredentialIsolation(home, source = process.env, allowMissing = false) {
   const profileAuth = join(home, "auth.json");
   let profileInfo;
@@ -144,7 +120,6 @@ export async function prepareCwsProfiles(profiles, options = {}) {
   for (const profile of profiles) {
     const home = await prepareProfileCodexHome(profile.id, source);
     await assertCredentialIsolation(home, source, options.allowMissingCredential === true);
-    await ensureFileCredentialStore(home);
     const metadataPath = join(home, CWS_METADATA);
     let current;
     try {

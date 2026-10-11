@@ -30,15 +30,15 @@ except ImportError:  # pragma: no cover - Windows is reported by doctor.
     fcntl = None
 
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 META_FILE = ".cws-profile.json"
 SESSION_LOCK = ".cws-session.lock"
 PROXY_ROUTING_FILE = "masaka-proxy-routing.json"
 PROXY_CLIENT_DIR = "proxy-client"
 PROXY_CLIENT_KEY = "sk-masaka-loopback-proxy"
-PROXY_PROVIDER_ID = "masaka-proxy"
-PROXY_PROVIDER_NAME = "Masaka Proxy"
+LEGACY_PROXY_PROVIDER_ID = "masaka-proxy"
+LEGACY_PROXY_MIGRATION_MARKER = ".masaka-rollouts-imported-v1"
 SENSITIVE_CONFIG_KEYS = {
     "cli_auth_credentials_store",
     "forced_chatgpt_workspace_id",
@@ -51,7 +51,7 @@ VALUE_OPTIONS = {
     "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C",
     "--cd", "--add-dir", "-a", "--ask-for-approval",
 }
-SHARED_ENTRIES = ("skills", "plugins", "rules", "hooks", "prompts", "themes", "pets")
+SHARED_ENTRIES = ("config.toml", "skills", "plugins", "rules", "hooks", "prompts", "themes", "pets")
 
 
 class CwsError(Exception):
@@ -162,6 +162,59 @@ def proxy_client_home() -> Path:
     }
     atomic_write(auth_path, json.dumps(auth, indent=2) + "\n")
     return home
+
+
+def migrate_legacy_proxy_rollouts(legacy_home: Path, runtime_home: Path) -> None:
+    """Import pre-0.4.1 Proxy rollouts without changing or deleting the originals."""
+    if legacy_home == runtime_home:
+        return
+    marker = legacy_home / LEGACY_PROXY_MIGRATION_MARKER
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise CwsError(f"legacy Proxy migration marker is unsafe: {marker}")
+    if marker.is_file():
+        return
+    for directory in ("sessions", "archived_sessions"):
+        source_root = legacy_home / directory
+        if not source_root.is_dir() or source_root.is_symlink():
+            continue
+        for source in source_root.rglob("*.jsonl"):
+            if source.is_symlink() or not source.is_file():
+                continue
+            relative = source.relative_to(source_root)
+            destination = runtime_home / directory / relative
+            if destination.exists() or destination.is_symlink():
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                dir=destination.parent,
+                prefix=f".{destination.name}.masaka-import-",
+            )
+            try:
+                os.fchmod(descriptor, 0o600)
+                with source.open("r", encoding="utf-8") as reader, os.fdopen(
+                    descriptor, "w", encoding="utf-8"
+                ) as writer:
+                    first = reader.readline()
+                    try:
+                        event = json.loads(first)
+                        payload = event.get("payload") if event.get("type") == "session_meta" else None
+                        if isinstance(payload, dict) and payload.get("model_provider") == LEGACY_PROXY_PROVIDER_ID:
+                            payload["model_provider"] = "openai"
+                            first = json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    except (AttributeError, json.JSONDecodeError):
+                        pass
+                    writer.write(first)
+                    shutil.copyfileobj(reader, writer)
+                try:
+                    os.link(temporary, destination)
+                except FileExistsError:
+                    pass
+            finally:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+    atomic_write(marker, "completed\n")
 
 
 def create_profile(args: argparse.Namespace) -> int:
@@ -292,24 +345,21 @@ def proxy_base_url() -> str | None:
 def config_args(metadata: dict[str, Any], use_proxy: bool = True) -> tuple[list[str], bool]:
     base_url = proxy_base_url() if use_proxy else None
     login_method = "api" if base_url else "chatgpt"
-    result = ["-c", 'cli_auth_credentials_store="file"', "-c", f'forced_login_method="{login_method}"']
+    credential_store = "ephemeral" if base_url else "file"
+    result = [
+        "-c", f'cli_auth_credentials_store="{credential_store}"',
+        "-c", f'forced_login_method="{login_method}"',
+    ]
     workspace = metadata.get("workspace_id")
     if workspace:
         result += ["-c", f"forced_chatgpt_workspace_id={json.dumps(workspace)}"]
     if base_url:
-        provider = (
-            f'model_providers.{PROXY_PROVIDER_ID}={{'
-            f'name={json.dumps(PROXY_PROVIDER_NAME)},'
-            f'base_url={json.dumps(base_url)},'
-            'wire_api="responses",'
-            'requires_openai_auth=true,'
-            'supports_websockets=true,'
-            'supports_standalone_web_search=true'
-            '}'
-        )
+        # Keep the built-in provider id so Codex's native resume picker does
+        # not hide existing `openai` sessions. Only its supported base URL is
+        # redirected to the local gateway.
         result += [
-            "-c", f'model_provider="{PROXY_PROVIDER_ID}"',
-            "-c", provider,
+            "-c", 'model_provider="openai"',
+            "-c", f"openai_base_url={json.dumps(base_url)}",
         ]
     return result, bool(base_url)
 
@@ -436,10 +486,17 @@ def launch(name: str, arguments: list[str]) -> int:
     home, metadata = load_profile(name)
     forwarded = validate_codex_arguments(arguments)
     command, proxy_enabled = command_for(metadata, forwarded)
-    runtime_home = proxy_client_home() if proxy_enabled else home
+    legacy_proxy_home = proxy_client_home() if proxy_enabled else None
+    lock_home = legacy_proxy_home if legacy_proxy_home is not None else home
+    # Proxy clients use an ephemeral API key supplied via the environment, so
+    # they can retain the user's native Codex sessions, project trust, and UI
+    # preferences without reading or replacing a Profile's OAuth credential.
+    runtime_home = base_codex_home() if proxy_enabled else home
+    if legacy_proxy_home is not None:
+        migrate_legacy_proxy_rollouts(legacy_proxy_home, runtime_home)
     # In direct mode one process exclusively owns the refresh chain. Proxy
     # clients may share the dummy-key home because only the daemon owns OAuth.
-    lock = acquire_lock(runtime_home, not proxy_enabled)
+    lock = acquire_lock(lock_home, not proxy_enabled)
     try:
         os.execvpe(command[0], command, codex_environment(runtime_home, proxy_enabled))
     finally:

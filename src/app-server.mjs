@@ -117,7 +117,7 @@ async function readAccountSnapshotViaAppServer(profile, options = {}) {
 
   try {
     await send(0, "initialize", {
-      clientInfo: { name: "masaka_cli", title: "Masaka", version: "0.4.0" },
+      clientInfo: { name: "masaka_cli", title: "Masaka", version: "0.4.1" },
     });
     child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
     const [account, limits, usage] = await Promise.all([
