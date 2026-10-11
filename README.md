@@ -19,6 +19,12 @@
   <a href="https://github.com/masakaai/codex-multiple-env/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/masakaai/codex-multiple-env/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/masakaai/codex-multiple-env/releases/latest">Latest release</a> ·
+  <a href="https://github.com/masakaai/codex-multiple-env/discussions">Discussions</a> ·
+  <a href="https://www.producthunt.com/products/masaka-for-codex?launch=masaka-for-codex">Product Hunt launch</a>
+</p>
+
 ## Install
 
 Requirements: macOS or Linux, Node.js 22+, Python 3, and the official
