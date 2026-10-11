@@ -28,6 +28,7 @@
     "scripts/cws.py",
     "scripts/file-lock.py",
     "docs/assets/masaka-banner.png",
+    "docs/assets/masaka-auto-demo.gif",
     "README.md",
     "README.*.md",
     "LICENSE",

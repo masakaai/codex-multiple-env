@@ -13,7 +13,7 @@ Masaka는 네이티브 Codex CLI를 위한 독립 계정 관리자입니다. 여
 macOS 또는 Linux, Node.js 22+, Python 3, 공식 Codex CLI가 필요합니다.
 
 ```bash
-npm install -g github:masakaai/codex-multiple-env
+npm install -g @masakaai/codex-multiple-env
 masaka doctor
 echo 'eval "$(masaka shell-init)"' >> ~/.zshrc
 eval "$(masaka shell-init)"

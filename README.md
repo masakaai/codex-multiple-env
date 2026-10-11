@@ -19,6 +19,25 @@
   <a href="https://github.com/masakaai/codex-multiple-env/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/masakaai/codex-multiple-env/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
+## Install
+
+Requirements: macOS or Linux, Node.js 22+, Python 3, and the official
+[Codex CLI](https://developers.openai.com/codex/cli/reference/).
+
+```bash
+npm install -g @masakaai/codex-multiple-env
+masaka doctor
+masaka
+```
+
+<p align="center">
+  <img width="100%" src="./docs/assets/masaka-auto-demo.gif" alt="Masaka auto mode keeps the active Codex account until its five-hour allowance reaches five percent, then routes the next request to another profile">
+</p>
+
+The animation uses fictional profiles and quota values. It shows the real
+boundary: an in-flight response stays on its original account, while the next
+native Codex request follows Masaka's newly selected route.
+
 Masaka is a small standalone account manager. It does not replace the Codex UI
 and it is not another agent CLI. Open `masaka` to add, inspect, renew, delete,
 or select profiles; then run the native `codex` command normally.
@@ -37,15 +56,7 @@ login, token refresh, and credential file.
 - Renew one profile without logging out or invalidating the others.
 - Prevent concurrent reauthentication while that profile is in use.
 
-## Install
-
-Requirements: macOS or Linux, Node.js 22+, Python 3, and the official
-[Codex CLI](https://developers.openai.com/codex/cli/reference/).
-
-```bash
-npm install -g github:masakaai/codex-multiple-env
-masaka doctor
-```
+## Shell integration
 
 Enable profile selection for ordinary `codex` commands:
 

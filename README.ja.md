@@ -13,7 +13,7 @@ logout/login の繰り返しなしで分離して保持できます。
 macOS または Linux、Node.js 22+、Python 3、公式 Codex CLI が必要です。
 
 ```bash
-npm install -g github:masakaai/codex-multiple-env
+npm install -g @masakaai/codex-multiple-env
 masaka doctor
 echo 'eval "$(masaka shell-init)"' >> ~/.zshrc
 eval "$(masaka shell-init)"

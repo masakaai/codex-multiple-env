@@ -13,7 +13,7 @@ perfis isolados, sem repetir logout/login.
 Requisitos: macOS ou Linux, Node.js 22+, Python 3 e a CLI oficial do Codex.
 
 ```bash
-npm install -g github:masakaai/codex-multiple-env
+npm install -g @masakaai/codex-multiple-env
 masaka doctor
 echo 'eval "$(masaka shell-init)"' >> ~/.zshrc
 eval "$(masaka shell-init)"

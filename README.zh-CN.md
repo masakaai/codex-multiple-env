@@ -6,6 +6,22 @@
 
 <p align="center"><a href="./README.md">English</a> · 简体中文 · <a href="./README.ja.md">日本語</a> · <a href="./README.ko.md">한국어</a> · <a href="./README.de.md">Deutsch</a> · <a href="./README.fr.md">Français</a> · <a href="./README.es.md">Español</a> · <a href="./README.pt-BR.md">Português</a></p>
 
+## 安装
+
+需要 macOS 或 Linux、Node.js 22+、Python 3，以及官方
+[Codex CLI](https://developers.openai.com/codex/cli/reference/)。
+
+```bash
+npm install -g @masakaai/codex-multiple-env
+masaka doctor
+masaka
+```
+
+<p align="center"><img width="100%" src="./docs/assets/masaka-auto-demo.gif" alt="Masaka auto 模式在五小时额度降到百分之五后，将原生 Codex 的下一次请求切换到另一个 Profile"></p>
+
+动画中的 Profile 与额度均为虚构数据。它展示了实际切换边界：正在输出的响应
+继续使用原账号，下一次原生 Codex 请求才跟随 Masaka 的新路由。
+
 Masaka 是独立的账号管理终端，不是另一个 Agent CLI，也不会替换 Codex
 界面。你在 `masaka` 中添加、查看、续登、删除或选择 Profile，之后仍然
 直接运行原生的 `codex`。
@@ -14,15 +30,7 @@ Masaka 是独立的账号管理终端，不是另一个 Agent CLI，也不会替
 拥有独立的 `CODEX_HOME`。浏览器登录、Token 刷新和凭据文件始终由官方
 Codex 管理。
 
-## 安装
-
-需要 macOS 或 Linux、Node.js 22+、Python 3，以及官方
-[Codex CLI](https://developers.openai.com/codex/cli/reference/)。
-
-```bash
-npm install -g github:masakaai/codex-multiple-env
-masaka doctor
-```
+## Shell 集成
 
 让普通的 `codex` 命令使用已选择的 Profile：
 
