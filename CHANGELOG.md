@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4 — 2026-10-12
+
+- Upgrade already-installed `masaka-websocket-recovery-v1` runtimes in place
+  so existing 0.4.3 development installs receive the final retry safeguards.
+
 ## 0.4.3 — 2026-10-12
 
 - Keep native Codex Responses WebSockets enabled while Proxy mode uses the

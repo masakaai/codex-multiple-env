@@ -53,7 +53,7 @@ import {
   waitForProxyProfileDrain,
 } from "./proxy-runtime.mjs";
 
-const VERSION = "0.4.3";
+const VERSION = "0.4.4";
 
 function help() {
   return `masaka — account and workspace manager for the native Codex CLI

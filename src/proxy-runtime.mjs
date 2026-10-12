@@ -16,7 +16,8 @@ export const PROXY_RUNTIME_SOURCE = `https://github.com/moonsunkim/codexmulti/ar
 export const PROXY_RUNTIME_SHA256 = "f5c81af791ec06dfd1cb57c69544785442cac0514e4ff02df17f1fba35d68c94";
 export const PROXY_LAUNCH_LABEL = "ai.masaka.codex-proxy";
 const RUNTIME_SAFETY_PATCH = "masaka-single-refresh-owner-v1";
-const RUNTIME_WEBSOCKET_PATCH = "masaka-websocket-recovery-v1";
+const RUNTIME_WEBSOCKET_PATCH_V1 = "masaka-websocket-recovery-v1";
+const RUNTIME_WEBSOCKET_PATCH = "masaka-websocket-recovery-v2";
 
 function rootPath(options = {}) {
   return resolve(options.root || options.env?.CX_HOME || cxHome());
@@ -184,6 +185,48 @@ function replacePinnedSource(source, needle, replacement, description) {
 
 export function patchWebSocketRuntimeSource(original) {
   if (original.includes(RUNTIME_WEBSOCKET_PATCH)) return original;
+  if (original.includes(RUNTIME_WEBSOCKET_PATCH_V1)) {
+    let source = original.replace(RUNTIME_WEBSOCKET_PATCH_V1, RUNTIME_WEBSOCKET_PATCH);
+    source = replacePinnedSource(
+      source,
+      `      if (message.opcode === 8) {
+        closeSocket(peer.socket, message.payload, { masked: true });
+        return;
+      }`,
+      `      if (message.opcode === 8) {
+        peer.closed = true;
+        if (peers.get(peer.name) === peer) peers.delete(peer.name);
+        closeSocket(peer.socket, message.payload, { masked: true });
+        return;
+      }`,
+      "WebSocket v1 closing-peer upgrade",
+    );
+    source = replacePinnedSource(
+      source,
+      `      const gone = () => {
+        if (peer.closed) return;
+        peer.closed = true;`,
+      `      const gone = () => {
+        peer.closed = true;`,
+      "WebSocket v1 peer-release upgrade",
+    );
+    source = replacePinnedSource(
+      source,
+      `      if (!admitted) {
+        pending.attempted.delete(name);
+        pending.attempted.delete(peer.name);
+        return await dispatch(pending);
+      }`,
+      `      if (!admitted) {
+        // Keep rejected accounts in the attempted set. A persistent manual
+        // selection can otherwise make selection and admission disagree and
+        // recurse forever between the same rejected account.
+        return await dispatch(pending);
+      }`,
+      "WebSocket v1 admission retry upgrade",
+    );
+    return source;
+  }
   let source = original;
   source = replacePinnedSource(
     source,

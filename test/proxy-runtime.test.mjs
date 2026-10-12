@@ -65,7 +65,7 @@ test("runtime patch recovers untouched WebSocket work and closes clients with a 
       }
 `;
   const patched = patchWebSocketRuntimeSource(source);
-  assert.match(patched, /masaka-websocket-recovery-v1/);
+  assert.match(patched, /masaka-websocket-recovery-v2/);
   assert.match(patched, /pendingRequests\.some\(\(pending\) => pending\.started \|\| pending\.interrupted\)/);
   assert.match(patched, /stop\(closePayload\(1011, 'proxy_upstream_disconnected'\)\)/);
   assert.match(patched, /if \(pending\.peer && pending\.peer !== peer\)/);
@@ -74,6 +74,42 @@ test("runtime patch recovers untouched WebSocket work and closes clients with a 
   assert.doesNotMatch(patched, /if \(peer\.pending\.size\) stop\(\)/);
   assert.doesNotMatch(patched, /pending\.attempted\.delete\(name\)/);
   assert.equal(patchWebSocketRuntimeSource(patched), patched);
+
+  const v1 = patched
+    .replace("masaka-websocket-recovery-v2", "masaka-websocket-recovery-v1")
+    .replace(
+      `      if (message.opcode === 8) {
+        peer.closed = true;
+        if (peers.get(peer.name) === peer) peers.delete(peer.name);
+        closeSocket(peer.socket, message.payload, { masked: true });
+        return;
+      }`,
+      `      if (message.opcode === 8) {
+        closeSocket(peer.socket, message.payload, { masked: true });
+        return;
+      }`,
+    )
+    .replace(
+      `      const gone = () => {
+        peer.closed = true;`,
+      `      const gone = () => {
+        if (peer.closed) return;
+        peer.closed = true;`,
+    )
+    .replace(
+      `      if (!admitted) {
+        // Keep rejected accounts in the attempted set. A persistent manual
+        // selection can otherwise make selection and admission disagree and
+        // recurse forever between the same rejected account.
+        return await dispatch(pending);
+      }`,
+      `      if (!admitted) {
+        pending.attempted.delete(name);
+        pending.attempted.delete(peer.name);
+        return await dispatch(pending);
+      }`,
+    );
+  assert.equal(patchWebSocketRuntimeSource(v1), patched);
 });
 
 test("routing state contains only a validated loopback endpoint", async () => {

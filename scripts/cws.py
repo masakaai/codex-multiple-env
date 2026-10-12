@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - Windows is reported by doctor.
     fcntl = None
 
 
-VERSION = "0.4.3"
+VERSION = "0.4.4"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 META_FILE = ".cws-profile.json"
 SESSION_LOCK = ".cws-session.lock"
