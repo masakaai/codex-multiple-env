@@ -29,7 +29,7 @@ import {
   saveProfile,
   setDefaultProfile,
 } from "./state.mjs";
-import { startupBanner, statusLimitLines } from "./terminal-ui.mjs";
+import { startupBanner, statusActiveProfileId, statusLimitLines } from "./terminal-ui.mjs";
 import { formatWorkspaceCredits, limitWindows, resetCredits, resetText } from "./usage.mjs";
 import {
   effectiveProfileOrder,
@@ -53,7 +53,7 @@ import {
   waitForProxyProfileDrain,
 } from "./proxy-runtime.mjs";
 
-const VERSION = "0.4.4";
+const VERSION = "0.4.5";
 
 function help() {
   return `masaka — account and workspace manager for the native Codex CLI
@@ -286,6 +286,14 @@ function tokenUsageLine(snapshot) {
   return `Tokens: ${lifetime} lifetime${streak}`;
 }
 
+function activeProfileHeading(text) {
+  const forceColor = process.env.FORCE_COLOR;
+  const colorEnabled = !("NO_COLOR" in process.env)
+    && forceColor !== "0"
+    && (Boolean(output.isTTY) || Boolean(forceColor));
+  return colorEnabled ? `\u001b[34m${text}\u001b[0m` : text;
+}
+
 async function snapshotFor(profile) {
   try {
     return { value: await readAccountSnapshot(profile) };
@@ -304,19 +312,31 @@ async function statusCommand() {
   const { profiles, defaultId, snapshots } = await profilesWithSnapshots();
   if (!profiles.length) return console.log("No profiles yet. Run /add.");
   const proxy = await readProxySettings();
+  let activeId = statusActiveProfileId(proxy, defaultId);
   if (proxy.daemonInstalled) {
     try {
       const live = await proxyStatus();
       const active = profiles.find((profile) => profile.id === live.active);
+      activeId = statusActiveProfileId(proxy, defaultId, live.active);
       console.log(`Proxy: ${proxy.proxyEnabled ? "on" : "off"} · auto ${proxy.auto ? "on" : "off"} · active ${active?.label || live.active || "none"}`);
     } catch {
       console.log(`Proxy: ${proxy.proxyEnabled ? "on" : "off"} · daemon unavailable`);
     }
   }
-  for (const [index, profile] of profiles.entries()) {
-    const marker = profile.id === defaultId ? " [active]" : "";
-    console.log(`${index + 1}. ${profile.label}${marker}`);
-    const snapshot = snapshots[index];
+  const rowsById = new Map(profiles.map((profile, index) => [profile.id, {
+    profile,
+    snapshot: snapshots[index],
+    selectorNumber: index + 1,
+  }]));
+  const candidates = profiles.map((profile, index) => profilePolicyCandidate(profile, snapshots[index]));
+  const rows = effectiveProfileOrder(candidates, proxy)
+    .map((id) => rowsById.get(id))
+    .filter(Boolean);
+  console.log(`Order: ${proxy.orderMode} · highest priority first`);
+  for (const { profile, snapshot, selectorNumber } of rows) {
+    const active = profile.id === activeId;
+    const heading = `${selectorNumber}. ${profile.label}${active ? " [active]" : ""}`;
+    console.log(active ? activeProfileHeading(heading) : heading);
     if (snapshot.error) {
       console.log(`  Status unavailable: ${snapshot.error}`);
       continue;

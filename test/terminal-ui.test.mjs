@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { startupBanner, statusLimitLines } from "../src/terminal-ui.mjs";
+import { startupBanner, statusActiveProfileId, statusLimitLines } from "../src/terminal-ui.mjs";
+
+test("status active profile follows the live proxy route and never the direct-mode default", () => {
+  assert.equal(statusActiveProfileId({ proxyEnabled: true }, "default", "live"), "live");
+  assert.equal(statusActiveProfileId({ proxyEnabled: true }, "default"), undefined);
+  assert.equal(statusActiveProfileId({ proxyEnabled: false }, "default", "stale-live"), "default");
+});
 
 test("wide startup banner is aligned and contains project onboarding", () => {
   const banner = startupBanner("0.3.0", 80);

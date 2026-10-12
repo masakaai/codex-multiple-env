@@ -40,6 +40,10 @@ export function startupBanner(version, columns = 80) {
   ].join("\n");
 }
 
+export function statusActiveProfileId(settings, defaultProfileId, liveProfileId) {
+  return settings?.proxyEnabled ? liveProfileId : defaultProfileId;
+}
+
 export function statusLimitLines(windows, options = {}) {
   if (!windows.length) return [];
   const columns = Number.isFinite(options.columns)

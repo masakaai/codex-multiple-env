@@ -4,13 +4,51 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildProxyConfig,
   defaultProxySettings,
   installProxyRuntime,
+  installLaunchAgent,
   launchAgentDocument,
   patchWebSocketRuntimeSource,
   readProxySettings,
   setProxyRouting,
 } from "../src/proxy-runtime.mjs";
+
+test("generated proxy config allows slow Responses requests to receive upstream headers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "masaka-proxy-config-"));
+  const config = await buildProxyConfig([], [], defaultProxySettings(), {
+    root,
+    env: { MASAKA_CWS_HOME: join(root, "cws") },
+  });
+  assert.equal(config.upstream_headers_timeout_ms, 300_000);
+});
+
+test("launch agent installation reloads changed program arguments and tolerates launchd teardown lag", async () => {
+  const root = await mkdtemp(join(tmpdir(), "masaka-launch-agent-"));
+  const agentPath = join(root, "ai.masaka.codex-proxy.plist");
+  const calls = [];
+  let bootstrapAttempts = 0;
+  const execute = async (command, args) => {
+    calls.push([command, ...args]);
+    if (args[0] === "bootstrap" && bootstrapAttempts++ === 0) throw new Error("launchd teardown in progress");
+    return { stdout: "", stderr: "" };
+  };
+  await installLaunchAgent({
+    root,
+    agentPath,
+    platform: "darwin",
+    uid: 501,
+    execFileAsync: execute,
+    sleep: async () => {},
+    env: { MASAKA_CWS_HOME: join(root, "cws"), PATH: "/usr/bin:/bin" },
+  });
+  assert.deepEqual(calls.map((call) => call.slice(1, 3)), [
+    ["print", "gui/501/ai.masaka.codex-proxy"],
+    ["bootout", "gui/501/ai.masaka.codex-proxy"],
+    ["bootstrap", "gui/501"],
+    ["bootstrap", "gui/501"],
+  ]);
+});
 
 test("proxy defaults to automatic sticky switching without enabling routing before onboarding", async () => {
   const root = await mkdtemp(join(tmpdir(), "masaka-proxy-settings-"));

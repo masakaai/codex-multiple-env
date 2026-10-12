@@ -409,6 +409,7 @@ export async function buildProxyConfig(profiles, orderedIds, settings, options =
     log_file: paths.log,
     upstream_chatgpt_base_url: "https://chatgpt.com/backend-api/",
     upstream_openai_base_url: "https://chatgpt.com/backend-api/codex",
+    upstream_headers_timeout_ms: 300_000,
     request_body_limit_bytes: 67_108_864,
     token_refresh_skew_seconds: 172_800,
     default_cooldown_seconds: 1800,
@@ -592,21 +593,38 @@ export function launchAgentDocument(options = {}) {
 }
 
 export async function installLaunchAgent(options = {}) {
-  if (process.platform !== "darwin") throw new Error("Automatic daemon installation currently requires macOS.");
+  if ((options.platform || process.platform) !== "darwin") throw new Error("Automatic daemon installation currently requires macOS.");
   const paths = proxyPaths(options);
   await mkdir(paths.proxy, { recursive: true, mode: 0o700 });
   const agent = options.agentPath || join(homedir(), "Library", "LaunchAgents", `${PROXY_LAUNCH_LABEL}.plist`);
   await atomicWrite(agent, launchAgentDocument(options), 0o644);
-  const domain = `gui/${process.getuid()}`;
+  const execute = options.execFileAsync || execFileAsync;
+  const sleep = options.sleep || ((milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)));
+  const domain = `gui/${options.uid ?? process.getuid()}`;
+  const service = `${domain}/${PROXY_LAUNCH_LABEL}`;
   let loaded = false;
   try {
-    await execFileAsync("launchctl", ["print", `${domain}/${PROXY_LAUNCH_LABEL}`]);
+    await execute("launchctl", ["print", service]);
     loaded = true;
   } catch {
     // The service was not loaded yet.
   }
-  if (!loaded) await execFileAsync("launchctl", ["bootstrap", domain, agent]);
-  await execFileAsync("launchctl", ["kickstart", "-k", `${domain}/${PROXY_LAUNCH_LABEL}`]);
+  // kickstart restarts a loaded job but does not reload ProgramArguments from
+  // a replaced plist. Re-register it so npm/local installation path changes
+  // actually take effect.
+  if (loaded) await execute("launchctl", ["bootout", service]);
+  let bootstrapError;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await execute("launchctl", ["bootstrap", domain, agent]);
+      bootstrapError = undefined;
+      break;
+    } catch (error) {
+      bootstrapError = error;
+      if (attempt < 19) await sleep(100);
+    }
+  }
+  if (bootstrapError) throw bootstrapError;
   return agent;
 }
 

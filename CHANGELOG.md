@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.5 — 2026-10-12
+
+- Extend the upstream response-header timeout from 60 seconds to 5 minutes so
+  slow Codex Responses requests do not fail with a local 502 while waiting.
+- Re-register the macOS LaunchAgent during onboarding so an updated daemon
+  path actually takes effect, with retry for launchd teardown latency.
+- Make `/status` mark the live Proxy route as active and display accounts in
+  automatic or manual priority order while preserving `/use` selector numbers.
+
 ## 0.4.4 — 2026-10-12
 
 - Upgrade already-installed `masaka-websocket-recovery-v1` runtimes in place

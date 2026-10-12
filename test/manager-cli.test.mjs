@@ -74,7 +74,7 @@ test("masaka starts a standalone slash-command manager and never launches Codex"
   const result = await runCli([], root, { input: "/profiles\n/exit\n" });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /^╭─+╮\n/);
-  assert.match(result.stdout, />_ masaka v0\.4\.4/);
+  assert.match(result.stdout, />_ masaka v0\.4\.5/);
   assert.match(result.stdout, /github\.com\/masakaai\/codex-multiple-env/);
   assert.match(result.stdout, /https:\/\/masaka-ai\.vercel\.app/);
   assert.match(result.stdout, /Masaka AI \(@masakaai\)/);
@@ -126,6 +126,36 @@ test("status reads profiles concurrently while preserving display order", async 
   assert.deepEqual(headings, [
     "1. Native Test [active]",
     "2. Native Test 2",
+    "3. Native Test 3",
+  ]);
+});
+
+test("status follows proxy priority while preserving selector numbers and highlights only the active route", async () => {
+  const { root } = await fixture({ profileCount: 3 });
+  await mkdir(join(root, "proxy"), { recursive: true });
+  await writeFile(join(root, "proxy", "settings.json"), JSON.stringify({
+    version: 1,
+    proxyEnabled: false,
+    daemonInstalled: false,
+    auto: true,
+    thresholdPercent: 5,
+    pollSeconds: 60,
+    orderMode: "manual",
+    order: [
+      "00000002-2222-4333-8444-555555555555",
+      "00000001-2222-4333-8444-555555555555",
+      "00000003-2222-4333-8444-555555555555",
+    ],
+    port: 8787,
+  }), { mode: 0o600 });
+
+  const status = await runCli(["status"], root, { env: { FORCE_COLOR: "1", NO_COLOR: undefined } });
+  assert.equal(status.code, 0, status.stderr);
+  assert.match(status.stdout, /Order: manual · highest priority first/);
+  const headings = status.stdout.split("\n").filter((line) => /\d+\. Native Test/.test(line));
+  assert.deepEqual(headings, [
+    "2. Native Test 2",
+    "\u001b[34m1. Native Test [active]\u001b[0m",
     "3. Native Test 3",
   ]);
 });
