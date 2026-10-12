@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.3 — 2026-10-12
+
+- Keep native Codex Responses WebSockets enabled while Proxy mode uses the
+  built-in `openai` provider and shared native session history.
+- Retry requests that produced no upstream events on the next eligible account
+  when their upstream WebSocket disconnects.
+- Complete the WebSocket close handshake instead of resetting Codex sockets;
+  partially streamed requests close with code 1011 rather than being replayed.
+- Keep Masaka's loopback WebSocket route active when users pass Codex `-c` or
+  `--config` overrides after a subcommand.
+
 ## 0.4.2 — 2026-10-11
 
 - Fix native Codex TUI onboarding in Proxy mode by loading the fixed loopback

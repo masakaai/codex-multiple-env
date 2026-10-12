@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - Windows is reported by doctor.
     fcntl = None
 
 
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 META_FILE = ".cws-profile.json"
 SESSION_LOCK = ".cws-session.lock"
@@ -458,9 +458,45 @@ def config_args(metadata: dict[str, Any], use_proxy: bool = True) -> tuple[list[
     return result, bool(base_url)
 
 
+def hoist_config_overrides(arguments: list[str]) -> tuple[list[str], list[str]]:
+    """Keep Codex global config layers ahead of subcommands.
+
+    Codex 0.155 accepts -c after `exec`, but that subcommand-level config list
+    replaces global overrides injected by this launcher. Moving only the
+    already-validated config flags preserves their order and keeps the proxy
+    base URL active. Arguments after `--` remain literal subcommand input.
+    """
+    # Only exec/review own a second config layer that Codex merges after the
+    # root layer. Other subcommands may forward `-c` to a child process (for
+    # example `codex sandbox ... python -c ...`) and must remain byte-for-byte.
+    if forwarded_subcommand(arguments) not in ("exec", "e", "review"):
+        return [], arguments
+
+    overrides: list[str] = []
+    forwarded: list[str] = []
+    index = 0
+    while index < len(arguments):
+        item = arguments[index]
+        if item == "--":
+            forwarded.extend(arguments[index:])
+            break
+        if item in ("-c", "--config") and index + 1 < len(arguments):
+            overrides.extend((item, arguments[index + 1]))
+            index += 2
+            continue
+        if item.startswith("--config=") or item.startswith("-c=") or (item.startswith("-c") and len(item) > 2):
+            overrides.append(item)
+            index += 1
+            continue
+        forwarded.append(item)
+        index += 1
+    return overrides, forwarded
+
+
 def command_for(metadata: dict[str, Any], arguments: list[str], use_proxy: bool = True) -> tuple[list[str], bool]:
     config, proxy_enabled = config_args(metadata, use_proxy)
-    return [codex_binary(), *config, *arguments], proxy_enabled
+    overrides, forwarded = hoist_config_overrides(arguments)
+    return [codex_binary(), *config, *overrides, *forwarded], proxy_enabled
 
 
 def normalize_remainder(arguments: list[str]) -> list[str]:

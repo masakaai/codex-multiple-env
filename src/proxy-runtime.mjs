@@ -16,6 +16,7 @@ export const PROXY_RUNTIME_SOURCE = `https://github.com/moonsunkim/codexmulti/ar
 export const PROXY_RUNTIME_SHA256 = "f5c81af791ec06dfd1cb57c69544785442cac0514e4ff02df17f1fba35d68c94";
 export const PROXY_LAUNCH_LABEL = "ai.masaka.codex-proxy";
 const RUNTIME_SAFETY_PATCH = "masaka-single-refresh-owner-v1";
+const RUNTIME_WEBSOCKET_PATCH = "masaka-websocket-recovery-v1";
 
 function rootPath(options = {}) {
   return resolve(options.root || options.env?.CX_HOME || cxHome());
@@ -174,28 +175,170 @@ export async function installProxyRuntime(options = {}) {
   }
 }
 
+function replacePinnedSource(source, needle, replacement, description) {
+  if (!source.includes(needle)) {
+    throw new Error(`Pinned Proxy runtime no longer matches Masaka's ${description} patch.`);
+  }
+  return source.replace(needle, replacement);
+}
+
+export function patchWebSocketRuntimeSource(original) {
+  if (original.includes(RUNTIME_WEBSOCKET_PATCH)) return original;
+  let source = original;
+  source = replacePinnedSource(
+    source,
+    "import { WebSocketMessages, webSocketFrame } from './websocket-frames.mjs';",
+    `import { WebSocketMessages, webSocketFrame } from './websocket-frames.mjs';
+
+// ${RUNTIME_WEBSOCKET_PATCH}: keep the built-in OpenAI provider on its native
+// Responses WebSocket transport while recovering untouched work after an
+// upstream disconnect and always completing the client close handshake.
+const CLOSE_TIMEOUT_MS = 1000;
+
+function closePayload(code, reason = '') {
+  const text = Buffer.from(reason).subarray(0, 123);
+  const payload = Buffer.allocUnsafe(2 + text.length);
+  payload.writeUInt16BE(code, 0);
+  text.copy(payload, 2);
+  return payload;
+}
+
+function closeSocket(socket, payload, { masked = false } = {}) {
+  if (socket.destroyed) return;
+  socket.end(webSocketFrame(payload, { opcode: 8, masked }));
+  const timer = setTimeout(() => socket.destroy(), CLOSE_TIMEOUT_MS);
+  timer.unref?.();
+  socket.once('close', () => clearTimeout(timer));
+}`,
+    "WebSocket helper",
+  );
+  source = replacePinnedSource(
+    source,
+    `    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      clientSocket.destroy();`,
+    `    const stop = (clientClose = null) => {
+      if (stopped) return;
+      stopped = true;
+      if (clientClose) closeSocket(clientSocket, clientClose);
+      else clientSocket.destroy();`,
+    "WebSocket shutdown",
+  );
+  source = replacePinnedSource(
+    source,
+    "      operation = Promise.resolve().then(work).catch(stop).finally(() => operations.delete(operation));",
+    `      operation = Promise.resolve().then(work)
+        .catch(() => stop(closePayload(1011, 'masaka_proxy_error')))
+        .finally(() => operations.delete(operation));`,
+    "WebSocket error shutdown",
+  );
+  source = replacePinnedSource(
+    source,
+    `      if (message.opcode === 8) {
+        peer.socket.end(webSocketFrame(message.payload, { opcode: 8, masked: true }));
+        if (peer.pending.size) stop();
+        return;
+      }`,
+    `      if (message.opcode === 8) {
+        peer.closed = true;
+        if (peers.get(peer.name) === peer) peers.delete(peer.name);
+        closeSocket(peer.socket, message.payload, { masked: true });
+        return;
+      }`,
+    "upstream WebSocket close",
+  );
+  source = replacePinnedSource(
+    source,
+    `      const gone = () => {
+        peer.closed = true;
+        peer.release();
+        allPeers.delete(peer);
+        if (!stopped && peer.pending.size) stop();
+      };`,
+    `      const gone = () => {
+        peer.closed = true;
+        peer.release();
+        allPeers.delete(peer);
+        if (peers.get(peer.name) === peer) peers.delete(peer.name);
+        if (stopped || !peer.pending.size) return;
+        const pendingRequests = [...peer.pending.values()];
+        peer.pending.clear();
+        if (pendingRequests.some((pending) => pending.started || pending.interrupted)) {
+          stop(closePayload(1011, 'proxy_upstream_disconnected'));
+          return;
+        }
+        for (const pending of pendingRequests) {
+          run(async () => {
+            if (!await dispatch(pending)) return;
+            if (pending.peer && pending.peer !== peer) {
+              onRetry(peer.name, pending.peer.name, pending.attempted.size);
+            }
+          });
+        }
+      };`,
+    "upstream WebSocket recovery",
+  );
+  source = replacePinnedSource(
+    source,
+    `      if (message.opcode === 8) {
+        clientSocket.end(webSocketFrame(message.payload, { opcode: 8 }));
+        stop();
+        return;
+      }`,
+    `      if (message.opcode === 8) {
+        stop(message.payload);
+        return;
+      }`,
+    "client WebSocket close",
+  );
+  source = replacePinnedSource(
+    source,
+    `      if (!admitted) {
+        pending.attempted.delete(name);
+        pending.attempted.delete(peer.name);
+        return await dispatch(pending);
+      }`,
+    `      if (!admitted) {
+        // Keep rejected accounts in the attempted set. A persistent manual
+        // selection can otherwise make selection and admission disagree and
+        // recurse forever between the same rejected account.
+        return await dispatch(pending);
+      }`,
+    "WebSocket admission retry bound",
+  );
+  return source;
+}
+
 async function applyRuntimeSafetyPatch(runtime) {
-  const path = join(runtime, "src", "server.mjs");
-  let source = await readFile(path, "utf8");
-  if (source.includes(RUNTIME_SAFETY_PATCH)) return;
-  const reloadNeedle = `      try {
+  const serverPath = join(runtime, "src", "server.mjs");
+  let source = await readFile(serverPath, "utf8");
+  if (!source.includes(RUNTIME_SAFETY_PATCH)) {
+    const reloadNeedle = `      try {
         if (options.beforeReloadCommit) await options.beforeReloadCommit();`;
-  const reloadReplacement = `      try {
+    const reloadReplacement = `      try {
         // ${RUNTIME_SAFETY_PATCH}: fence background/control refresh before
         // replacing the registry, then reread credentials after the fence.
         await renewalMutex.run(async () => {});
         await candidateRegistry.initialize();
         if (options.beforeReloadCommit) await options.beforeReloadCommit();`;
-  const refreshNeedle = "          const credentials = await registry.forceRefresh(name);";
-  const refreshReplacement = `          const credentials = await renewalMutex.run(async () => {
+    const refreshNeedle = "          const credentials = await registry.forceRefresh(name);";
+    const refreshReplacement = `          const credentials = await renewalMutex.run(async () => {
             if (reconfiguring || generation !== current) throw new Error('proxy_reconfiguring');
             return await registry.forceRefresh(name);
           });`;
-  if (!source.includes(reloadNeedle) || !source.includes(refreshNeedle)) {
-    throw new Error("Pinned Proxy runtime no longer matches Masaka's refresh-safety patch.");
+    if (!source.includes(reloadNeedle) || !source.includes(refreshNeedle)) {
+      throw new Error("Pinned Proxy runtime no longer matches Masaka's refresh-safety patch.");
+    }
+    source = source.replace(reloadNeedle, reloadReplacement).replace(refreshNeedle, refreshReplacement);
+    await atomicWrite(serverPath, source, 0o600);
   }
-  source = source.replace(reloadNeedle, reloadReplacement).replace(refreshNeedle, refreshReplacement);
-  await atomicWrite(path, source, 0o600);
+  const websocketPath = join(runtime, "src", "responses-websocket.mjs");
+  const websocketSource = await readFile(websocketPath, "utf8");
+  const patchedWebsocketSource = patchWebSocketRuntimeSource(websocketSource);
+  if (patchedWebsocketSource !== websocketSource) {
+    await atomicWrite(websocketPath, patchedWebsocketSource, 0o600);
+  }
 }
 
 export async function buildProxyConfig(profiles, orderedIds, settings, options = {}) {

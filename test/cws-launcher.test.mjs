@@ -149,6 +149,30 @@ test("launcher injects the loopback model route only while Masaka proxy mode is 
   assert.equal(JSON.parse(bypassed.stdout.trim()).has_codex_key, false);
 });
 
+test("launcher hoists user config overrides before Codex subcommands without losing proxy routing", async () => {
+  const { env } = await setup();
+  await writeFile(join(env.CWS_HOME, "masaka-proxy-routing.json"), JSON.stringify({
+    version: 1,
+    enabled: true,
+    baseUrl: "http://127.0.0.1:8787/backend-api/codex",
+  }), { mode: 0o600 });
+  const result = await execFileAsync("python3", [
+    cws, "auto", "--", "exec", "-c", "model_reasoning_effort=low", "review",
+  ], { env });
+  const argv = JSON.parse(result.stdout.trim()).argv;
+  const subcommand = argv.indexOf("exec");
+  const userConfig = argv.indexOf("model_reasoning_effort=low");
+  assert.ok(userConfig > 0 && userConfig < subcommand);
+  assert.ok(argv.includes('openai_base_url="http://127.0.0.1:8787/backend-api/codex"'));
+  assert.deepEqual(argv.slice(subcommand), ["exec", "review"]);
+
+  const child = await execFileAsync("python3", [
+    cws, "auto", "--", "sandbox", "macos", "python3", "-c", "print('literal')",
+  ], { env });
+  const childArgv = JSON.parse(child.stdout.trim()).argv;
+  assert.deepEqual(childArgv.slice(-5), ["sandbox", "macos", "python3", "-c", "print('literal')"]);
+});
+
 test("launcher refuses credentials hard-linked to another path", async () => {
   const { root, home, env } = await setup();
   await link(join(home, "auth.json"), join(root, "credential-alias.json"));

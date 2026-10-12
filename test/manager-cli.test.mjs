@@ -74,7 +74,7 @@ test("masaka starts a standalone slash-command manager and never launches Codex"
   const result = await runCli([], root, { input: "/profiles\n/exit\n" });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /^╭─+╮\n/);
-  assert.match(result.stdout, />_ masaka v0\.4\.2/);
+  assert.match(result.stdout, />_ masaka v0\.4\.3/);
   assert.match(result.stdout, /github\.com\/masakaai\/codex-multiple-env/);
   assert.match(result.stdout, /https:\/\/masaka-ai\.vercel\.app/);
   assert.match(result.stdout, /Masaka AI \(@masakaai\)/);

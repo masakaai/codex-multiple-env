@@ -7,6 +7,7 @@ import {
   defaultProxySettings,
   installProxyRuntime,
   launchAgentDocument,
+  patchWebSocketRuntimeSource,
   readProxySettings,
   setProxyRouting,
 } from "../src/proxy-runtime.mjs";
@@ -26,6 +27,53 @@ test("runtime installer rejects an archive that does not match the pinned digest
     root,
     fetchImpl: async () => new Response("not the pinned runtime", { status: 200 }),
   }), /checksum mismatch/);
+});
+
+test("runtime patch recovers untouched WebSocket work and closes clients with a handshake", () => {
+  const source = `import { WebSocketMessages, webSocketFrame } from './websocket-frames.mjs';
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      clientSocket.destroy();
+
+      operation = Promise.resolve().then(work).catch(stop).finally(() => operations.delete(operation));
+
+      if (message.opcode === 8) {
+        peer.socket.end(webSocketFrame(message.payload, { opcode: 8, masked: true }));
+        if (peer.pending.size) stop();
+        return;
+      }
+
+      const gone = () => {
+        peer.closed = true;
+        peer.release();
+        allPeers.delete(peer);
+        if (!stopped && peer.pending.size) stop();
+      };
+
+      if (message.opcode === 8) {
+        clientSocket.end(webSocketFrame(message.payload, { opcode: 8 }));
+        stop();
+        return;
+      }
+
+      if (!admitted) {
+        pending.attempted.delete(name);
+        pending.attempted.delete(peer.name);
+        return await dispatch(pending);
+      }
+`;
+  const patched = patchWebSocketRuntimeSource(source);
+  assert.match(patched, /masaka-websocket-recovery-v1/);
+  assert.match(patched, /pendingRequests\.some\(\(pending\) => pending\.started \|\| pending\.interrupted\)/);
+  assert.match(patched, /stop\(closePayload\(1011, 'proxy_upstream_disconnected'\)\)/);
+  assert.match(patched, /if \(pending\.peer && pending\.peer !== peer\)/);
+  assert.match(patched, /peer\.closed = true;\n        if \(peers\.get\(peer\.name\) === peer\) peers\.delete\(peer\.name\);/);
+  assert.match(patched, /stop\(message\.payload\)/);
+  assert.doesNotMatch(patched, /if \(peer\.pending\.size\) stop\(\)/);
+  assert.doesNotMatch(patched, /pending\.attempted\.delete\(name\)/);
+  assert.equal(patchWebSocketRuntimeSource(patched), patched);
 });
 
 test("routing state contains only a validated loopback endpoint", async () => {
