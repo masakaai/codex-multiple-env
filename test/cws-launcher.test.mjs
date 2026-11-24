@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +35,36 @@ async function setup() {
   await execFileAsync("python3", [cws, "default", "profile-a"], { env });
   return { root, base, home, env };
 }
+
+test("launcher recovers a removed npm Codex path using the current PATH launcher", async () => {
+  const { root, home, env } = await setup();
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  await symlink(fakeCodex, join(bin, "codex"));
+  const result = await execFileAsync("python3", [cws, "auto", "--", "--version"], {
+    env: { ...env, PATH: `${bin}:${env.PATH}`, CWS_CODEX_BIN: join(root, "removed-npm", "codex.js") },
+  });
+  assert.equal(await realpath(JSON.parse(result.stdout.trim()).codex_home), await realpath(home));
+});
+
+test("shell wrapper follows the stable Codex symlink after an installation upgrade", async () => {
+  const { root, env } = await setup();
+  const bin = join(root, "bin with spaces");
+  const oldBinary = join(root, "old-codex");
+  const newBinary = join(root, "new-codex");
+  await mkdir(bin);
+  await copyFile(fakeCodex, oldBinary);
+  await copyFile(fakeCodex, newBinary);
+  const stableBinary = join(bin, "codex");
+  await symlink(oldBinary, stableBinary);
+  const shellEnv = { ...env, CWS_CODEX_BIN: stableBinary };
+  const init = await execFileAsync("python3", [cws, "shell-init"], { env: shellEnv });
+  await unlink(stableBinary);
+  await symlink(newBinary, stableBinary);
+  await unlink(oldBinary);
+  const result = await execFileAsync("bash", ["-c", `${init.stdout}\ncodex --version`], { env: shellEnv });
+  assert.equal(JSON.parse(result.stdout.trim()).argv.at(-1), "--version");
+});
 
 test("native codex starts with the selected isolated CODEX_HOME and sanitized auth environment", async () => {
   const { root, base, home, env } = await setup();

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Recover from stale Codex launcher paths after switching from npm to Homebrew.
+- Preserve the stable executable symlink in shell integration across Codex upgrades.
+
 ## 0.4.5 — 2026-10-12
 
 - Extend the upstream response-header timeout from 60 seconds to 5 minutes so

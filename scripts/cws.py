@@ -341,9 +341,17 @@ def create_profile(args: argparse.Namespace) -> int:
 
 def codex_binary() -> str:
     configured = os.environ.get("CWS_CODEX_BIN")
-    binary = configured or shutil.which("codex")
+    if configured:
+        binary = shutil.which(configured)
+        if binary:
+            return binary
+    # Older shell functions pin the npm launcher, which disappears when users
+    # switch installation methods. Resolve the current executable in that case.
+    binary = shutil.which("codex")
     if not binary:
-        raise CwsError("cannot find Codex; install @openai/codex or set CWS_CODEX_BIN")
+        raise CwsError("cannot find an executable Codex; install Codex or set CWS_CODEX_BIN")
+    if configured:
+        print(f"masaka-cws: configured Codex launcher is unavailable; using {binary} from PATH", file=sys.stderr)
     return binary
 
 
@@ -687,7 +695,8 @@ def shell_init(_: argparse.Namespace) -> int:
     script = shlex.quote(str(Path(__file__).resolve()))
     profile_root = shlex.quote(str(state_root()))
     base_home = shlex.quote(str(base_codex_home()))
-    binary = shlex.quote(str(Path(codex_binary()).resolve()))
+    # Retain the stable bin symlink so Homebrew/npm upgrades can replace its target.
+    binary = shlex.quote(codex_binary())
     print("unalias codex 2>/dev/null || true")
     print(
         f"codex() {{ command env CWS_HOME={profile_root} "
