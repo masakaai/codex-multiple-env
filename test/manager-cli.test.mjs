@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const cli = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 const fakeCws = fileURLToPath(new URL("./fake-cws.py", import.meta.url));
 const fakeNativeCodex = fileURLToPath(new URL("./fake-native-codex.py", import.meta.url));
+const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 async function fixture(options = {}) {
   const root = await mkdtemp(join(tmpdir(), "masaka-manager-test-"));
@@ -74,7 +75,7 @@ test("masaka starts a standalone slash-command manager and never launches Codex"
   const result = await runCli([], root, { input: "/profiles\n/exit\n" });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /^╭─+╮\n/);
-  assert.match(result.stdout, />_ masaka v0\.4\.5/);
+  assert.equal(result.stdout.match(/>_ masaka v(\S+)/)?.[1], version);
   assert.match(result.stdout, /github\.com\/masakaai\/codex-multiple-env/);
   assert.match(result.stdout, /https:\/\/masaka-ai\.vercel\.app/);
   assert.match(result.stdout, /Masaka AI \(@masakaai\)/);

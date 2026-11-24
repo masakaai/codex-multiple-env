@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.6 — 2026-11-24
 
 - Recover from stale Codex launcher paths after switching from npm to Homebrew.
 - Preserve the stable executable symlink in shell integration across Codex upgrades.
